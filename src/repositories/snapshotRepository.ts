@@ -37,6 +37,13 @@ export interface SnapshotRepository {
   getByPeriod(periodId: EntityId): Promise<PortfolioSnapshot[]>
   getByDate(portfolioId: EntityId, date: string): Promise<PortfolioSnapshot | null>
   getLatest(portfolioId: EntityId): Promise<PortfolioSnapshot | null>
+  /**
+   * Último snapshot con fecha estrictamente anterior a `date`.
+   * La apertura de un período no tiene que compartir su periodId.
+   */
+  getLatestBefore(portfolioId: EntityId, date: string): Promise<PortfolioSnapshot | null>
+  /** Último snapshot del período, por fecha. Puede haber más de uno. */
+  getLatestByPeriod(periodId: EntityId): Promise<PortfolioSnapshot | null>
   createSnapshot(input: CreateSnapshotInput): Promise<PortfolioSnapshot>
   createPosition(input: CreatePositionInput): Promise<Position>
   createCashBalance(input: CreateCashBalanceInput): Promise<CashBalance>
@@ -191,6 +198,34 @@ export function createSnapshotRepository(db: DatabaseClient): SnapshotRepository
            ORDER BY date DESC, id DESC
            LIMIT 1`,
           [portfolioId],
+        )
+        return row ? mapSnapshotRow(row) : null
+      })
+    },
+
+    getLatestBefore(portfolioId, date) {
+      return persist('snapshot.getLatestBefore', async () => {
+        const row = await db.selectOne<SnapshotRow>(
+          `SELECT ${SNAPSHOT_COLUMNS}
+           FROM snapshots
+           WHERE portfolio_id = $1 AND date < $2
+           ORDER BY date DESC, id DESC
+           LIMIT 1`,
+          [portfolioId, date],
+        )
+        return row ? mapSnapshotRow(row) : null
+      })
+    },
+
+    getLatestByPeriod(periodId) {
+      return persist('snapshot.getLatestByPeriod', async () => {
+        const row = await db.selectOne<SnapshotRow>(
+          `SELECT ${SNAPSHOT_COLUMNS}
+           FROM snapshots
+           WHERE period_id = $1
+           ORDER BY date DESC, id DESC
+           LIMIT 1`,
+          [periodId],
         )
         return row ? mapSnapshotRow(row) : null
       })

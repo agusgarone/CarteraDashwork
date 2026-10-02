@@ -1,14 +1,5 @@
-import { readFileSync } from 'node:fs'
-import path from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
-import { fileURLToPath } from 'node:url'
-import {
-  createDatabaseClient,
-  type DatabaseClient,
-  type SqlParam,
-  type TransactionParam,
-  type TransactionStatement,
-} from '../src/database/client.ts'
+import type { DatabaseClient } from '../src/database/client.ts'
+import { openMemoryDatabase } from '../src/database/sqliteMemory.ts'
 import { RepositoryError } from '../src/database/errors.ts'
 import { mapInstrumentRow } from '../src/database/mappers/instrumentMapper.ts'
 import { mapSnapshotRow } from '../src/database/mappers/snapshotMapper.ts'
@@ -107,67 +98,6 @@ function checkMappers(): void {
   assert(!Object.hasOwn(instrument, 'quantity'), 'Instrument no debe tener quantity')
   assert(!Object.hasOwn(instrument, 'currentValue'), 'Instrument no debe tener currentValue')
   assert(!Object.hasOwn(instrument, 'returnPercentage'), 'Instrument no debe tener returnPercentage')
-}
-
-function createMemoryClient(): { client: DatabaseClient; close: () => void } {
-  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-  const schema = readFileSync(
-    path.join(root, 'src-tauri/migrations/001_initial_schema.sql'),
-    'utf8',
-  )
-  const sqlite = new DatabaseSync(':memory:')
-  sqlite.exec(schema)
-
-  function run(sql: string, params: SqlParam[]) {
-    const info = sqlite.prepare(sql.replaceAll(/\$\d+/g, '?')).run(...params)
-    const rawId = info.lastInsertRowid
-    const lastInsertId = typeof rawId === 'bigint' ? Number(rawId) : rawId
-    return { rowsAffected: Number(info.changes), lastInsertId }
-  }
-
-  function resolveParam(param: TransactionParam, ids: number[]): SqlParam {
-    if (typeof param === 'object' && param !== null && 'lastInsertIdOf' in param) {
-      const id = ids[param.lastInsertIdOf]
-      if (id === undefined) {
-        throw new Error(`lastInsertIdOf ${param.lastInsertIdOf} no está disponible`)
-      }
-      return id
-    }
-    return param
-  }
-
-  const client = createDatabaseClient({
-    select<T>(sql: string, params: SqlParam[] = []): Promise<T[]> {
-      const statement = sqlite.prepare(sql.replaceAll(/\$\d+/g, '?'))
-      const rows = statement.all(...params)
-      return Promise.resolve(rows as T[])
-    },
-    execute(sql: string, params: SqlParam[] = []) {
-      return Promise.resolve(run(sql, params))
-    },
-    transaction(statements: TransactionStatement[]) {
-      sqlite.exec('BEGIN')
-      const ids: number[] = []
-      try {
-        for (const statement of statements) {
-          const params = (statement.params ?? []).map((param) => resolveParam(param, ids))
-          ids.push(run(statement.sql, params).lastInsertId)
-        }
-        sqlite.exec('COMMIT')
-        return Promise.resolve({ lastInsertIds: ids })
-      } catch (error) {
-        sqlite.exec('ROLLBACK')
-        return Promise.reject(error)
-      }
-    },
-  })
-
-  return {
-    client,
-    close() {
-      sqlite.close()
-    },
-  }
 }
 
 async function checkRoundtrip(db: DatabaseClient): Promise<void> {
@@ -506,14 +436,14 @@ async function checkIntegrity(db: DatabaseClient): Promise<void> {
 
 async function main(): Promise<void> {
   checkMappers()
-  const memory = createMemoryClient()
+  const memory = openMemoryDatabase()
   try {
     await checkRoundtrip(memory.client)
   } finally {
     memory.close()
   }
 
-  const integrity = createMemoryClient()
+  const integrity = openMemoryDatabase()
   try {
     await checkIntegrity(integrity.client)
   } finally {
