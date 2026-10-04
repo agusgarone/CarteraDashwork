@@ -1,3 +1,4 @@
+import type { CurrencyCode } from '../../domain/currency'
 import type { InstrumentCategory } from '../../domain/instrument'
 
 /**
@@ -23,6 +24,40 @@ export const julyAugust2026 = {
   contribution: '1250000.00',
   withdrawal: '1000000.00',
 } as const
+
+export interface JulyAugustCashBalance {
+  currency: CurrencyCode
+  amount: string
+  fxRate: string | null
+}
+
+/**
+ * Saldos de caja reales. El valor en moneda base lo calcula el engine:
+ * ARS usa el amount; USD usa amount × fxRate.
+ */
+export const julyAugustCash = {
+  opening: [
+    cash('ARS', '17658.61', null),
+    cash('USD_MEP', '188.58', '1518.19'),
+    cash('USD_CABLE', '0.00', '1579.25'),
+  ],
+  closing: [
+    cash('ARS', '267659.33', null),
+    cash('USD_MEP', '188.58', '1534.51'),
+    cash('USD_CABLE', '3.34', '1600.56'),
+  ],
+} as const
+
+/**
+ * Dividendos en dólares cable cobrados en agosto.
+ * No tienen fxRate de la fecha de cobro: la cantidad se reconcilia,
+ * el valor en pesos queda sin clasificar.
+ */
+export const julyAugustCableDividends = [
+  { date: '2026-08-03', ticker: 'SPY', netAmount: '1.92' },
+  { date: '2026-08-03', ticker: 'JPM', netAmount: '1.17' },
+  { date: '2026-08-14', ticker: 'AAPL', netAmount: '0.25' },
+] as const
 
 export const ypfStockDividend = {
   ticker: 'YPFD',
@@ -62,6 +97,14 @@ export const julyAugustHoldings: readonly JulyAugustHolding[] = [
   holding('BCACCA', 'FUND', '14860.792493', '2495624.61', '2287732.22'),
   holding('BRTA', 'FUND', '3214.592773', '2400252.55', '2386701.86'),
 ]
+
+function cash(
+  currency: CurrencyCode,
+  amount: string,
+  fxRate: string | null,
+): JulyAugustCashBalance {
+  return { currency, amount, fxRate }
+}
 
 function holding(
   ticker: string,

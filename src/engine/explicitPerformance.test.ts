@@ -40,7 +40,9 @@ describe('calculateExplicitPerformanceBreakdown', () => {
       fees: '50.00',
       taxes: '100.00',
     })
-    expect(calculateExplainedResult({ ...result, valuationChange: '0.00' })).toBe('850.00')
+    expect(calculateExplainedResult({ ...result, valuationChange: '0.00', cashEconomicResult: null })).toBe(
+      '850.00',
+    )
   })
 
   it('no vuelve a restar costos cuando el dividendo solo tiene neto', () => {
@@ -57,8 +59,12 @@ describe('calculateExplicitPerformanceBreakdown', () => {
       ...ZERO,
       dividends: '850.00',
     })
-    expect(calculateExplainedResult({ ...result, valuationChange: '0.00' })).toBe('850.00')
-    expect(calculateExplainedResult({ ...result, valuationChange: '0.00' })).not.toBe('700.00')
+    expect(calculateExplainedResult({ ...result, valuationChange: '0.00', cashEconomicResult: null })).toBe(
+      '850.00',
+    )
+    expect(
+      calculateExplainedResult({ ...result, valuationChange: '0.00', cashEconomicResult: null }),
+    ).not.toBe('700.00')
   })
 
   it('toma el bruto de un interés', () => {
@@ -123,7 +129,9 @@ describe('calculateExplicitPerformanceBreakdown', () => {
       cost('TAX', '0.05'),
     )
 
-    expect(calculateExplainedResult({ ...result, valuationChange: '0.00' })).toBe('0.25')
+    expect(calculateExplainedResult({ ...result, valuationChange: '0.00', cashEconomicResult: null })).toBe(
+      '0.25',
+    )
   })
 })
 
@@ -143,21 +151,56 @@ describe('reconcileExplicitPerformance', () => {
       expectedResult: '179959.00',
       breakdown: {
         valuationChange: '0.00',
+        cashEconomicResult: '0.00',
         dividends: '1000.00',
         interest: '500.00',
         fees: '100.00',
         taxes: '50.00',
       },
       positionResults: [],
-      explainedResult: '1350.00',
-      unexplainedDifference: '178609.00',
+      cash: {
+        balances: [],
+        openingCashValue: '0.00',
+        closingCashValue: '0.00',
+        totalCashValueChange: '0.00',
+        externalNetFlows: '0.00',
+        cashEconomicResult: '0.00',
+        fxValuationChange: '0.00',
+        attribution: {
+          totalEconomicResult: '0.00',
+          fxValuationChange: '0.00',
+          dividends: '1000.00',
+          interest: '500.00',
+          fees: '100.00',
+          taxes: '50.00',
+          otherCashResult: '-1350.00',
+        },
+        currencyAttributions: [
+          {
+            currency: 'ARS',
+            openingAmount: '0.00',
+            closingAmount: '0.00',
+            classifiedAmountChange: '1350.00',
+            dividendInflows: '1000.00',
+            amountDifference: '-1350.00',
+            amountStatus: 'AMOUNT_MISMATCH',
+            attributionStatus: 'BASE_CURRENCY',
+          },
+        ],
+        status: 'EXPLAINED',
+        reason: null,
+      },
+      explainedResult: '0.00',
+      unexplainedDifference: '179959.00',
     })
     expect(result).not.toHaveProperty('marketChange')
   })
 })
 
 describe('performanceAnalysisService', () => {
-  it('falla si un movimiento explícito está en otra moneda', async () => {
+  it('no convierte un movimiento explícito en otra moneda cuando la caja está invalidada', async () => {
+    const closing = closingSnapshot()
+    const opening = { ...closing, id: 'opening', date: '2026-07-31', periodId: 'july' }
     const service = createPerformanceAnalysisService({
       analysis: {
         analyzePeriod: async () => ({
@@ -170,21 +213,30 @@ describe('performanceAnalysisService', () => {
         }),
       },
       periods: {
-        getById: async () => {
-          throw new Error('el período no debería leerse si la moneda ya falló')
-        },
+        getById: async () => ({
+          id: 'august',
+          portfolioId: 'portfolio',
+          year: 2026,
+          month: 8,
+          status: 'COMPLETE',
+          createdAt: '2026-08-01 00:00:00',
+          completedAt: null,
+        }),
       },
       snapshots: {
-        getLatestByPeriod: async () => closingSnapshot(),
-        getLatestBefore: async () => {
-          throw new Error('la apertura no debería leerse si la moneda ya falló')
-        },
-        getAggregate: async () => {
-          throw new Error('el agregado no debería leerse si la moneda ya falló')
-        },
+        getLatestByPeriod: async () => closing,
+        getLatestBefore: async () => opening,
+        getAggregate: async (id) => ({
+          snapshot: id === 'opening' ? opening : closing,
+          positions: [],
+          cashBalances: [],
+        }),
       },
       transactions: {
-        getByPeriod: async () => [income('DIVIDEND', { currency: 'USD_MEP', grossAmount: '10.00' })],
+        getByPeriod: async () => [
+          cost('BUY', '10.00'),
+          income('DIVIDEND', { currency: 'USD_MEP', grossAmount: '10.00' }),
+        ],
       },
       corporateActions: {
         getByPeriod: async () => [],

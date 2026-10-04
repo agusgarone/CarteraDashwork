@@ -1,15 +1,16 @@
 import type { DecimalString } from '../../domain/common'
 import type { CorporateAction } from '../../domain/corporateAction'
 import type { CurrencyCode } from '../../domain/currency'
-import type { Position } from '../../domain/snapshot'
+import type { CashBalance, Position } from '../../domain/snapshot'
 import type { Transaction, TransactionType } from '../../domain/transaction'
 import { AnalysisError, MissingTransactionAmountError } from '../errors/analysisErrors'
-import { formatMonetary, parseDecimal, zeroDecimal } from '../money'
+import { formatExact, formatMonetary, parseDecimal, zeroDecimal } from '../money'
 import type {
   ExplicitPerformanceBreakdown,
   PerformanceBreakdown,
   PerformanceReconciliationResult,
 } from '../models/explicitPerformance'
+import { reconcileCash } from './cashReconciliation'
 import {
   analyzePositionValuations,
   calculateTotalValuationChange,
@@ -22,6 +23,11 @@ export interface ExplicitPerformanceInput {
   closingPositions?: readonly Position[]
   corporateActions?: readonly CorporateAction[]
   currency?: CurrencyCode
+  openingCashBalances?: readonly CashBalance[]
+  closingCashBalances?: readonly CashBalance[]
+  baseCurrency?: CurrencyCode
+  /** Resultado de PeriodAnalysisService. No se vuelven a sumar aportes y retiros. */
+  netContributions?: DecimalString
 }
 
 /**
@@ -77,23 +83,36 @@ export function calculateExplicitPerformanceBreakdown(
   }
 }
 
-/** valuationChange + dividends + interest − fees − taxes */
+/**
+ * Con caja explicada: valuationChange + cashEconomicResult.
+ * Dividendos, intereses, costos y tipo de cambio son subcomponentes de
+ * ese bucket y no se suman otra vez.
+ * Con caja invalidada (null): valuationChange + dividends + interest − fees − taxes.
+ */
 export function calculateExplainedResult(breakdown: PerformanceBreakdown): DecimalString {
-  const explained = parseDecimal(breakdown.valuationChange)
+  const valuation = parseDecimal(breakdown.valuationChange)
+  if (breakdown.cashEconomicResult !== null) {
+    return formatExact(valuation.plus(breakdown.cashEconomicResult))
+  }
+
+  const explained = valuation
     .plus(breakdown.dividends)
     .plus(breakdown.interest)
     .minus(breakdown.fees)
     .minus(breakdown.taxes)
-  return formatMonetary(explained)
+  return formatExact(explained)
 }
 
-/** expectedResult − explainedResult. No se fuerza a cero y no es marketChange. */
+/**
+ * expectedResult − explainedResult.
+ * No se fuerza a cero, no es marketChange y no se renombra a redondeo.
+ */
 export function calculateUnexplainedDifference(
   expectedResult: DecimalString,
   explainedResult: DecimalString,
 ): DecimalString {
   const difference = parseDecimal(expectedResult).minus(parseDecimal(explainedResult))
-  return formatMonetary(difference)
+  return formatExact(difference)
 }
 
 export function reconcileExplicitPerformance(
@@ -111,9 +130,26 @@ export function reconcileExplicitPerformance(
           corporateActions: input.corporateActions ?? [],
           currency: requiredCurrency(input.currency),
         })
-  const explicit = calculateExplicitPerformanceBreakdown(input.transactions)
+  const baseCurrency = input.baseCurrency ?? input.currency ?? 'ARS'
+  const cash = reconcileCash({
+    openingCashBalances: input.openingCashBalances ?? [],
+    closingCashBalances: input.closingCashBalances ?? [],
+    baseCurrency,
+    netContributions: input.netContributions ?? '0.00',
+    transactions: input.transactions,
+  })
+  const explicit =
+    cash.cashEconomicResult === null
+      ? explicitBreakdownWhenCashIsInvalid(input.transactions, baseCurrency)
+      : {
+          dividends: cash.attribution?.dividends ?? '0.00',
+          interest: cash.attribution?.interest ?? '0.00',
+          fees: cash.attribution?.fees ?? '0.00',
+          taxes: cash.attribution?.taxes ?? '0.00',
+        }
   const breakdown: PerformanceBreakdown = {
     valuationChange: calculateTotalValuationChange(positionResults),
+    cashEconomicResult: cash.cashEconomicResult,
     dividends: explicit.dividends,
     interest: explicit.interest,
     fees: explicit.fees,
@@ -124,9 +160,25 @@ export function reconcileExplicitPerformance(
     expectedResult: formatMonetary(parseDecimal(input.expectedResult)),
     breakdown,
     positionResults,
+    cash,
     explainedResult,
     unexplainedDifference: calculateUnexplainedDifference(input.expectedResult, explainedResult),
   }
+}
+
+function explicitBreakdownWhenCashIsInvalid(
+  transactions: readonly Transaction[],
+  baseCurrency: CurrencyCode,
+): ExplicitPerformanceBreakdown {
+  for (const transaction of transactions) {
+    if (!isExplicitPerformance(transaction.type)) continue
+    if (transaction.currency !== baseCurrency) {
+      throw new AnalysisError(
+        `El movimiento ${transaction.id} (${transaction.type}) está en ${transaction.currency} y la caja simple no está explicada. No hay conversión de moneda.`,
+      )
+    }
+  }
+  return calculateExplicitPerformanceBreakdown(transactions)
 }
 
 function requiredCurrency(currency: CurrencyCode | undefined): CurrencyCode {

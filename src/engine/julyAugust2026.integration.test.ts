@@ -10,6 +10,8 @@ import { createSnapshotRepository } from '../repositories/snapshotRepository'
 import { createTransactionRepository } from '../repositories/transactionRepository'
 import {
   julyAugust2026,
+  julyAugustCash,
+  julyAugustCableDividends,
   julyAugustHoldings,
   ypfStockDividend,
 } from './fixtures/julyAugust2026'
@@ -69,25 +71,66 @@ describe('fixture real julio → agosto 2026', () => {
     expect(analysis.performance.breakdown.interest).toBe('0.00')
     expect(analysis.performance.breakdown.fees).toBe('0.00')
     expect(analysis.performance.breakdown.taxes).toBe('0.00')
-    expect(analysis.performance.explainedResult).toBe(analysis.performance.breakdown.valuationChange)
-    expect(analysis.performance.unexplainedDifference).toBe('3525.08')
-    expect(analysis.performance.breakdown.valuationChange).toBe('176433.92')
+    expect(analysis.performance.breakdown.valuationChange).toBe('171533.92')
+    expect(analysis.base.netContributions).toBe('250000.00')
+    expect(analysis.performance.cash.externalNetFlows).toBe(analysis.base.netContributions)
+    expect(analysis.performance.cash.status).toBe('EXPLAINED')
+    expect(exact(analysis.performance.cash.openingCashValue)).toBe('303958.8802')
+    expect(exact(analysis.performance.cash.closingCashValue)).toBe('562383.0962')
+    expect(exact(analysis.performance.cash.totalCashValueChange)).toBe('258424.2160')
+    expect(exact(analysis.performance.cash.cashEconomicResult)).toBe('8424.2160')
+    expect(exact(analysis.performance.breakdown.cashEconomicResult)).toBe('8424.2160')
+    expect(exact(mep(analysis)?.fxValuationChange)).toBe('3077.6256')
+    expect(mep(analysis)?.status).toBe('UNCHANGED_AMOUNT')
+    expect(currencyAttribution(analysis, 'USD_MEP')?.amountStatus).toBe('RECONCILED')
+    expect(currencyAttribution(analysis, 'USD_MEP')?.attributionStatus).toBe('FX_ONLY')
+    expect(cable(analysis)?.status).toBe('AMOUNT_CHANGED')
+    expect(currencyAttribution(analysis, 'USD_CABLE')?.amountStatus).toBe('RECONCILED')
+    expect(currencyAttribution(analysis, 'USD_CABLE')?.attributionStatus).toBe('MISSING_TRANSACTION_FX')
+    expect(exact(currencyAttribution(analysis, 'USD_CABLE')?.dividendInflows)).toBe('3.3400')
+    expect(exact(currencyAttribution(analysis, 'USD_CABLE')?.classifiedAmountChange)).toBe('3.3400')
+    expect(exact(currencyAttribution(analysis, 'USD_CABLE')?.amountDifference)).toBe('0.0000')
+    expect(analysis.performance.cash.attribution?.dividends).toBe('0.00')
+    expect(currencyAttribution(analysis, 'ARS')?.amountStatus).toBe('AMOUNT_MISMATCH')
+    expect(currencyAttribution(analysis, 'ARS')?.attributionStatus).toBe('BASE_CURRENCY')
+    expect(exact(currencyAttribution(analysis, 'ARS')?.amountDifference)).toBe('0.7200')
+    expect(cable(analysis)?.fxValuationChange).toBeNull()
+    expect(exact(cable(analysis)?.closingValue)).toBe('5345.8704')
+    expect(exact(analysis.performance.explainedResult)).toBe('179958.1360')
+    expect(exact(analysis.performance.unexplainedDifference)).toBe('0.8640')
+    expect(analysis.performance.unexplainedDifference).not.toBe('0.00')
+    expect(exact(analysis.performance.cash.attribution?.fxValuationChange)).toBe('3077.6256')
+    expect(analysis.performance.cash.attribution?.dividends).toBe('0.00')
+    expect(analysis.performance.cash.attribution?.interest).toBe('0.00')
+    expect(analysis.performance.cash.attribution?.fees).toBe('0.00')
+    expect(analysis.performance.cash.attribution?.taxes).toBe('0.00')
+    expect(exact(analysis.performance.cash.attribution?.otherCashResult)).toBe('5346.5904')
+    expect(exact(analysis.performance.cash.attribution?.totalEconomicResult)).toBe('8424.2160')
+    expect(
+      new Decimal(analysis.performance.explainedResult).eq(
+        new Decimal(analysis.performance.breakdown.valuationChange).plus(
+          analysis.performance.breakdown.cashEconomicResult ?? '0',
+        ),
+      ),
+    ).toBe(true)
+    expect(analysis.performance).not.toHaveProperty('roundingDifference')
     expect(analysis.performance).not.toHaveProperty('marketChange')
 
     expect(analysis.performance.positionResults).toHaveLength(25)
-    expect(explained(analysis)).toHaveLength(24)
-    expect(pending(analysis)).toHaveLength(1)
+    expect(explainable(analysis)).toHaveLength(25)
+    expect(pending(analysis)).toHaveLength(0)
+    expect(
+      analysis.performance.positionResults.filter(
+        (position) => position.status === 'CORPORATE_ACTION_EXPLAINED',
+      ),
+    ).toHaveLength(1)
 
     for (const [ticker, change] of Object.entries(expectedChangeByTicker)) {
       expect(changeOf(analysis, tickerByInstrument, ticker), ticker).toBe(change)
     }
 
-    const ypf = pending(analysis)[0]
-    expect(tickerByInstrument.get(ypf?.instrumentId ?? '')).toBe('YPFD')
-    expect(ypf).toMatchObject({
-      status: 'HAS_CORPORATE_ACTION',
-      valuationChange: null,
-    })
+    expect(changeOf(analysis, tickerByInstrument, 'YPFD')).toBe('-4900.00')
+    expect(statusOf(analysis, tickerByInstrument, 'YPFD')).toBe('CORPORATE_ACTION_EXPLAINED')
 
     expect(topTickers(analysis, tickerByInstrument, 'desc')).toEqual([
       'SPY',
@@ -107,12 +150,22 @@ describe('fixture real julio → agosto 2026', () => {
 
   it('el total de valuación es la suma de las posiciones explicadas', () => {
     let total = new Decimal('0')
-    for (const position of explained(analysis)) {
+    for (const position of explainable(analysis)) {
       total = total.plus(position.valuationChange ?? '0')
     }
 
     expect(total.toFixed(2)).toBe(analysis.performance.breakdown.valuationChange)
-    expect(total.toFixed(2)).toBe('176433.92')
+    expect(total.toFixed(2)).toBe('171533.92')
+  })
+
+  it('suma la caja una sola vez y no vuelve a sumar el tipo de cambio', () => {
+    const explained = new Decimal(analysis.performance.breakdown.valuationChange).plus(
+      analysis.performance.breakdown.cashEconomicResult ?? '0',
+    )
+
+    expect(explained.eq(analysis.performance.explainedResult)).toBe(true)
+    expect(explained.plus(analysis.performance.cash.fxValuationChange).eq(explained)).toBe(false)
+    expect(explained.eq(analysis.performance.cash.totalCashValueChange)).toBe(false)
   })
 })
 
@@ -187,6 +240,25 @@ async function loadJulyAugust(client: Parameters<typeof createPortfolioRepositor
     })
   }
 
+  for (const balance of julyAugustCash.opening) {
+    await snapshots.createCashBalance({
+      snapshotId: opening.id,
+      currency: balance.currency,
+      amount: balance.amount,
+      fxRate: balance.fxRate,
+      valueInBaseCurrency: null,
+    })
+  }
+  for (const balance of julyAugustCash.closing) {
+    await snapshots.createCashBalance({
+      snapshotId: closing.id,
+      currency: balance.currency,
+      amount: balance.amount,
+      fxRate: balance.fxRate,
+      valueInBaseCurrency: null,
+    })
+  }
+
   const ypfId = [...tickerByInstrument.entries()].find(
     ([, ticker]) => ticker === ypfStockDividend.ticker,
   )?.[0]
@@ -241,6 +313,30 @@ async function loadJulyAugust(client: Parameters<typeof createPortfolioRepositor
     sourceReference: null,
   })
 
+  for (const dividend of julyAugustCableDividends) {
+    const instrumentId = [...tickerByInstrument.entries()].find(
+      ([, ticker]) => ticker === dividend.ticker,
+    )?.[0]
+    if (!instrumentId) throw new Error(`el fixture no creó ${dividend.ticker}`)
+    await transactions.create({
+      portfolioId: portfolio.id,
+      periodId: august.id,
+      instrumentId,
+      date: dividend.date,
+      type: 'DIVIDEND',
+      quantity: null,
+      unitPrice: null,
+      grossAmount: null,
+      netAmount: dividend.netAmount,
+      fees: null,
+      taxes: null,
+      currency: 'USD_CABLE',
+      fxRate: null,
+      sourceDocumentId: null,
+      sourceReference: null,
+    })
+  }
+
   const performance = createPerformanceAnalysisService({
     analysis: periodAnalysis,
     periods,
@@ -255,12 +351,44 @@ async function loadJulyAugust(client: Parameters<typeof createPortfolioRepositor
   }
 }
 
-function explained(analysis: PeriodPerformanceAnalysis) {
-  return analysis.performance.positionResults.filter((position) => position.status === 'EXPLAINED')
+function exact(value: string | null | undefined): string {
+  return new Decimal(value ?? '0').toFixed(4)
+}
+
+function mep(analysis: PeriodPerformanceAnalysis) {
+  return analysis.performance.cash.balances.find((balance) => balance.currency === 'USD_MEP')
+}
+
+function cable(analysis: PeriodPerformanceAnalysis) {
+  return analysis.performance.cash.balances.find((balance) => balance.currency === 'USD_CABLE')
+}
+
+function currencyAttribution(analysis: PeriodPerformanceAnalysis, currency: 'ARS' | 'USD_MEP' | 'USD_CABLE') {
+  return analysis.performance.cash.currencyAttributions.find((item) => item.currency === currency)
+}
+
+function explainable(analysis: PeriodPerformanceAnalysis) {
+  return analysis.performance.positionResults.filter(
+    (position) =>
+      position.status === 'EXPLAINED' || position.status === 'CORPORATE_ACTION_EXPLAINED',
+  )
 }
 
 function pending(analysis: PeriodPerformanceAnalysis) {
-  return analysis.performance.positionResults.filter((position) => position.status !== 'EXPLAINED')
+  return analysis.performance.positionResults.filter(
+    (position) =>
+      position.status !== 'EXPLAINED' && position.status !== 'CORPORATE_ACTION_EXPLAINED',
+  )
+}
+
+function statusOf(
+  analysis: PeriodPerformanceAnalysis,
+  tickerByInstrument: Map<EntityId, string>,
+  ticker: string,
+) {
+  return analysis.performance.positionResults.find(
+    (position) => tickerByInstrument.get(position.instrumentId) === ticker,
+  )?.status
 }
 
 function changeOf(
@@ -278,7 +406,7 @@ function topTickers(
   tickerByInstrument: Map<EntityId, string>,
   direction: 'asc' | 'desc',
 ) {
-  return explained(analysis)
+  return explainable(analysis)
     .slice()
     .sort((left, right) => {
       const comparison = new Decimal(left.valuationChange ?? '0').cmp(right.valuationChange ?? '0')
@@ -297,23 +425,87 @@ function diagnostic(
     return `${ticker} → ${position.status}`
   })
 
+  const corporateActions = explainable(analysis).filter(
+    (position) => position.status === 'CORPORATE_ACTION_EXPLAINED',
+  )
+  const corporateLines = corporateActions.flatMap((position) => {
+    const ticker = tickerByInstrument.get(position.instrumentId) ?? position.instrumentId
+    return [
+      ticker,
+      'STOCK_DIVIDEND',
+      `${position.openingQuantity} → ${position.closingQuantity}`,
+      `valuationChange ${position.valuationChange}`,
+    ]
+  })
+
   return [
     'EXPECTED RESULT',
     analysis.performance.expectedResult,
     '',
-    'STABLE POSITION VALUATION',
+    'POSITION VALUATION',
     analysis.performance.breakdown.valuationChange,
+    '',
+    'CASH ECONOMIC RESULT',
+    analysis.performance.breakdown.cashEconomicResult,
+    '',
+    'EXPLICIT PERFORMANCE',
+    new Decimal(analysis.performance.breakdown.dividends)
+      .plus(analysis.performance.breakdown.interest)
+      .minus(analysis.performance.breakdown.fees)
+      .minus(analysis.performance.breakdown.taxes)
+      .toFixed(2),
+    '',
+    'EXPLAINED',
+    analysis.performance.explainedResult,
     '',
     'UNEXPLAINED',
     analysis.performance.unexplainedDifference,
     '',
     'POSITIONS EXPLAINED',
-    String(explained(analysis).length),
+    String(explainable(analysis).length),
     '',
     'POSITIONS PENDING',
     String(pending(analysis).length),
     '',
     'PENDING:',
-    ...pendingLines,
+    ...(pendingLines.length === 0 ? ['—'] : pendingLines),
+    '',
+    'CORPORATE ACTIONS EXPLAINED',
+    String(corporateActions.length),
+    '',
+    ...corporateLines,
+    '',
+    ...cashDiagnostic(analysis),
   ].join('\n')
+}
+
+function cashDiagnostic(analysis: PeriodPerformanceAnalysis): string[] {
+  const mep = currencyAttribution(analysis, 'USD_MEP')
+  const cable = currencyAttribution(analysis, 'USD_CABLE')
+  const pesos = currencyAttribution(analysis, 'ARS')
+  return [
+    'USD_MEP',
+    `Opening amount: ${mep?.openingAmount}`,
+    `Closing amount: ${mep?.closingAmount}`,
+    `Amount difference: ${mep?.amountDifference}`,
+    `FX result: ${analysis.performance.cash.attribution?.fxValuationChange}`,
+    `Amount status: ${mep?.amountStatus}`,
+    `Attribution: ${mep?.attributionStatus}`,
+    '',
+    'USD_CABLE',
+    `Opening amount: ${cable?.openingAmount}`,
+    `Dividend inflows: ${cable?.dividendInflows}`,
+    `Closing amount: ${cable?.closingAmount}`,
+    `Amount difference: ${cable?.amountDifference}`,
+    `Amount status: ${cable?.amountStatus}`,
+    `ARS attribution: ${cable?.attributionStatus}`,
+    '',
+    'ARS',
+    `Opening: ${pesos?.openingAmount}`,
+    `Net external flows: ${analysis.performance.cash.externalNetFlows}`,
+    `Closing: ${pesos?.closingAmount}`,
+    `Residual: ${pesos?.amountDifference}`,
+    `Amount status: ${pesos?.amountStatus}`,
+    `Attribution: ${pesos?.attributionStatus}`,
+  ]
 }

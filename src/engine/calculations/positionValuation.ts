@@ -51,16 +51,41 @@ export function calculateStablePositionValuation(input: StablePositionInput): Po
     closingValue: formatMonetary(parseDecimal(input.closing.marketValue)),
   }
 
-  if (hasCorporateAction(input.corporateActions, instrumentId)) {
-    return unexplained(base, 'HAS_CORPORATE_ACTION', 'Hay una acción corporativa en el período.')
-  }
-
   if (hasBlockingTransaction(input.transactions, instrumentId)) {
     return unexplained(
       base,
       'HAS_PERIOD_TRANSACTION',
       'Hay una compra, venta o movimiento de fondo en el período.',
     )
+  }
+
+  const corporateActions = actionsFor(input.corporateActions, instrumentId)
+  const corporateAction = classifyStockDividends(
+    corporateActions,
+    input.opening.quantity,
+    input.closing.quantity,
+  )
+  if (corporateAction === 'pending') {
+    return unexplained(
+      base,
+      'HAS_CORPORATE_ACTION',
+      'Hay una acción corporativa que esta versión no explica.',
+    )
+  }
+  if (corporateAction === 'mismatch') {
+    return unexplained(
+      base,
+      'CORPORATE_ACTION_MISMATCH',
+      'La acción corporativa no cierra la cantidad de la posición.',
+    )
+  }
+  if (corporateAction === 'explained') {
+    return {
+      ...base,
+      valuationChange: marketValueChange(input.opening, input.closing),
+      status: 'CORPORATE_ACTION_EXPLAINED',
+      reason: null,
+    }
   }
 
   const sameQuantity = parseDecimal(input.opening.quantity).eq(input.closing.quantity)
@@ -72,10 +97,9 @@ export function calculateStablePositionValuation(input: StablePositionInput): Po
     )
   }
 
-  const valuationChange = parseDecimal(input.closing.marketValue).minus(input.opening.marketValue)
   return {
     ...base,
-    valuationChange: formatMonetary(valuationChange),
+    valuationChange: marketValueChange(input.opening, input.closing),
     status: 'EXPLAINED',
     reason: null,
   }
@@ -132,13 +156,13 @@ export function analyzePositionValuations(input: PositionValuationInput): Positi
   })
 }
 
-/** Suma solo las posiciones EXPLAINED. */
+/** Suma posiciones estables y dividendos en acciones cuya cantidad cierra. */
 export function calculateTotalValuationChange(
   results: readonly PositionValuationResult[],
 ): DecimalString {
   let total = zeroDecimal()
   for (const result of results) {
-    if (result.status !== 'EXPLAINED' || result.valuationChange === null) continue
+    if (!isIncludedInValuation(result.status) || result.valuationChange === null) continue
     total = total.plus(parseDecimal(result.valuationChange))
   }
   return formatMonetary(total)
@@ -163,11 +187,51 @@ function indexByInstrument(
   return indexed
 }
 
-function hasCorporateAction(
+function marketValueChange(opening: Position, closing: Position): DecimalString {
+  return formatMonetary(parseDecimal(closing.marketValue).minus(opening.marketValue))
+}
+
+/**
+ * Un STOCK_DIVIDEND explica el cambio de cantidad, no un ingreso de caja.
+ * El efecto económico es solo la diferencia de marketValue.
+ * quantityChange * precio no se suma aparte.
+ */
+function classifyStockDividends(
+  actions: readonly CorporateAction[],
+  openingQuantity: string,
+  closingQuantity: string,
+): 'none' | 'pending' | 'explained' | 'mismatch' {
+  if (actions.length === 0) return 'none'
+  if (actions.some((action) => action.type !== 'STOCK_DIVIDEND')) return 'pending'
+
+  const opening = parseDecimal(openingQuantity)
+  const closing = parseDecimal(closingQuantity)
+  let quantityChange = zeroDecimal()
+
+  for (const action of actions) {
+    if (action.quantityChange === null) return 'mismatch'
+    if (action.quantityBefore !== null && !parseDecimal(action.quantityBefore).eq(opening)) {
+      return 'mismatch'
+    }
+    if (action.quantityAfter !== null && !parseDecimal(action.quantityAfter).eq(closing)) {
+      return 'mismatch'
+    }
+    quantityChange = quantityChange.plus(parseDecimal(action.quantityChange))
+  }
+
+  if (!opening.plus(quantityChange).eq(closing)) return 'mismatch'
+  return 'explained'
+}
+
+function actionsFor(
   corporateActions: readonly CorporateAction[],
   instrumentId: EntityId,
-): boolean {
-  return corporateActions.some((action) => action.instrumentId === instrumentId)
+): CorporateAction[] {
+  return corporateActions.filter((action) => action.instrumentId === instrumentId)
+}
+
+function isIncludedInValuation(status: PositionValuationStatus): boolean {
+  return status === 'EXPLAINED' || status === 'CORPORATE_ACTION_EXPLAINED'
 }
 
 function hasBlockingTransaction(

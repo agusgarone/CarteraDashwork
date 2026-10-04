@@ -1,4 +1,5 @@
 import type { DecimalString } from '../../domain/common'
+import type { CashReconciliationResult } from './cashReconciliation'
 import type { PositionValuationResult } from './positionValuation'
 
 /**
@@ -13,23 +14,33 @@ export interface ExplicitPerformanceBreakdown {
   taxes: DecimalString
 }
 
-/** Desglose calculado. valuationChange no es marketChange. */
+/**
+ * Desglose calculado. valuationChange no es marketChange.
+ *
+ * cashEconomicResult es el bucket de caja después de aportes y retiros.
+ * null cuando hay transferencias internas y esta versión no lo calcula.
+ * Si entra en explainedResult, los dividendos y costos que ya viven dentro
+ * de ese bucket no se suman de nuevo. fxValuationChange queda en el detalle
+ * de caja: es una parte del bucket, no otro sumando.
+ */
 export interface PerformanceBreakdown extends ExplicitPerformanceBreakdown {
   valuationChange: DecimalString
+  cashEconomicResult: DecimalString | null
 }
 
 /**
  * Reconciliación todavía no persistida.
  * expectedResult, explainedResult y unexplainedDifference son los tres
  * valores que después puede guardar un ReconciliationRun.
- * unexplainedDifference no es variación de mercado: también puede incluir
- * tipo de cambio, caja, compras y ventas, acciones corporativas, redondeo
- * y movimientos que esta versión no clasifica.
+ * unexplainedDifference no es variación de mercado ni un redondeo formal.
+ * Puede incluir caja invalidada, compras y ventas, acciones corporativas
+ * no cerradas y movimientos que esta versión no clasifica.
  */
 export interface PerformanceReconciliationResult {
   expectedResult: DecimalString
   breakdown: PerformanceBreakdown
   positionResults: PositionValuationResult[]
+  cash: CashReconciliationResult
   explainedResult: DecimalString
   unexplainedDifference: DecimalString
 }

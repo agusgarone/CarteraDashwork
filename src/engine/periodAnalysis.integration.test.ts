@@ -133,23 +133,29 @@ describe('análisis de agosto contra SQLite', () => {
       valuationChange: '-29123.00',
     })
     expect(byInstrument.get(ypf.id)).toMatchObject({
-      status: 'HAS_CORPORATE_ACTION',
-      valuationChange: null,
+      status: 'CORPORATE_ACTION_EXPLAINED',
+      valuationChange: '-4900.00',
     })
     expect(result.performance.positionResults).toHaveLength(4)
-    expect(result.performance.breakdown.valuationChange).toBe('20477.00')
+    expect(result.performance.breakdown.valuationChange).toBe('15577.00')
+    expect(result.performance.breakdown.dividends).toBe('1000.00')
+    expect(result.performance.breakdown.cashEconomicResult).toBeNull()
+    expect(result.performance.cash.status).toBe('HAS_INTERNAL_CASH_MOVEMENTS')
+    expect(result.performance.cash.cashEconomicResult).toBeNull()
     expect(result.performance).toEqual({
       expectedResult: '179959.00',
       breakdown: {
-        valuationChange: '20477.00',
+        valuationChange: '15577.00',
+        cashEconomicResult: null,
         dividends: '1000.00',
         interest: '500.00',
         fees: '100.00',
         taxes: '50.00',
       },
       positionResults: result.performance.positionResults,
-      explainedResult: '21827.00',
-      unexplainedDifference: '158132.00',
+      cash: result.performance.cash,
+      explainedResult: '16927.00',
+      unexplainedDifference: '163032.00',
     })
     expect(result.performance).not.toHaveProperty('marketChange')
     expect(result.performance.breakdown).not.toHaveProperty('marketChange')

@@ -1,3 +1,5 @@
+export { reconcileCash } from './calculations/cashReconciliation'
+export type { CashReconciliationInput } from './calculations/cashReconciliation'
 export {
   calculateExplainedResult,
   calculateExplicitPerformanceBreakdown,
@@ -28,6 +30,16 @@ export {
   MissingPeriodError,
   MissingTransactionAmountError,
 } from './errors/analysisErrors'
+export type {
+  CashAmountStatus,
+  CashAttributionBreakdown,
+  CashCurrencyAttribution,
+  CashCurrencyStatus,
+  CashReconciliationResult,
+  CashReconciliationStatus,
+  CashValueAttributionStatus,
+  CashValuationResult,
+} from './models/cashReconciliation'
 export type {
   ExplicitPerformanceBreakdown,
   PerformanceBreakdown,

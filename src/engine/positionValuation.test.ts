@@ -48,9 +48,65 @@ describe('analyzePositionValuations', () => {
     expect(result.valuationChange).toBeNull()
   })
 
-  it('deja YPF sin valuación simple cuando hay dividendo en acciones', () => {
+  it('explica YPFD cuando el dividendo en acciones cierra la cantidad', () => {
     const result = analyze('ypf', '14', '1160600.00', '140', '1155700.00', {
       corporateActions: [stockDividend('ypf')],
+    })
+
+    expect(result.status).toBe('CORPORATE_ACTION_EXPLAINED')
+    expect(result.valuationChange).toBe('-4900.00')
+  })
+
+  it('no explica un dividendo en acciones si además hay una compra', () => {
+    const result = analyze('ypf', '14', '1160600.00', '140', '1155700.00', {
+      transactions: [trade('BUY', 'ypf')],
+      corporateActions: [stockDividend('ypf')],
+    })
+
+    expect(result.status).toBe('HAS_PERIOD_TRANSACTION')
+    expect(result.valuationChange).toBeNull()
+  })
+
+  it('no explica un dividendo en acciones si además hay una venta', () => {
+    const result = analyze('ypf', '14', '1160600.00', '140', '1155700.00', {
+      transactions: [trade('SELL', 'ypf')],
+      corporateActions: [stockDividend('ypf')],
+    })
+
+    expect(result.status).toBe('HAS_PERIOD_TRANSACTION')
+    expect(result.valuationChange).toBeNull()
+  })
+
+  it('no explica un dividendo en acciones cuya cantidad no cierra', () => {
+    const result = analyze('ypf', '14', '1160600.00', '140', '1155700.00', {
+      corporateActions: [stockDividend('ypf', { quantityChange: '100' })],
+    })
+
+    expect(result.status).toBe('CORPORATE_ACTION_MISMATCH')
+    expect(result.valuationChange).toBeNull()
+  })
+
+  it('no explica un dividendo en acciones si quantityBefore no es la apertura', () => {
+    const result = analyze('ypf', '14', '1160600.00', '140', '1155700.00', {
+      corporateActions: [stockDividend('ypf', { quantityBefore: '15' })],
+    })
+
+    expect(result.status).toBe('CORPORATE_ACTION_MISMATCH')
+    expect(result.valuationChange).toBeNull()
+  })
+
+  it('no explica un dividendo en acciones si quantityAfter no es el cierre', () => {
+    const result = analyze('ypf', '14', '1160600.00', '140', '1155700.00', {
+      corporateActions: [stockDividend('ypf', { quantityAfter: '150' })],
+    })
+
+    expect(result.status).toBe('CORPORATE_ACTION_MISMATCH')
+    expect(result.valuationChange).toBeNull()
+  })
+
+  it('deja un split sin valuación simple', () => {
+    const result = analyze('ypf', '14', '1160600.00', '140', '1155700.00', {
+      corporateActions: [stockDividend('ypf', { type: 'SPLIT' })],
     })
 
     expect(result.status).toBe('HAS_CORPORATE_ACTION')
@@ -180,7 +236,10 @@ function trade(type: TransactionType, instrumentId: string): Transaction {
   }
 }
 
-function stockDividend(instrumentId: string): CorporateAction {
+function stockDividend(
+  instrumentId: string,
+  overrides: Partial<CorporateAction> = {},
+): CorporateAction {
   return {
     id: `action-${instrumentId}`,
     portfolioId: 'portfolio',
@@ -195,5 +254,6 @@ function stockDividend(instrumentId: string): CorporateAction {
     description: null,
     sourceDocumentId: null,
     createdAt: '2026-08-20 00:00:00',
+    ...overrides,
   }
 }

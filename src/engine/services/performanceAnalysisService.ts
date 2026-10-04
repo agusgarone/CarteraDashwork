@@ -1,9 +1,8 @@
 import type { EntityId } from '../../domain/common'
 import type { CorporateAction } from '../../domain/corporateAction'
-import type { CurrencyCode } from '../../domain/currency'
 import type { PortfolioPeriod } from '../../domain/period'
 import type { PortfolioSnapshot, PortfolioSnapshotAggregate } from '../../domain/snapshot'
-import type { Transaction, TransactionType } from '../../domain/transaction'
+import type { Transaction } from '../../domain/transaction'
 import { corporateActionRepository } from '../../repositories/corporateActionRepository'
 import { periodRepository } from '../../repositories/periodRepository'
 import { snapshotRepository } from '../../repositories/snapshotRepository'
@@ -56,7 +55,6 @@ export function createPerformanceAnalysisService(
       }
 
       const transactions = await dependencies.transactions.getByPeriod(periodId)
-      assertExplicitMovementsUseCurrency(transactions, closing.currency)
 
       const period = await dependencies.periods.getById(periodId)
       if (!period) {
@@ -84,11 +82,14 @@ export function createPerformanceAnalysisService(
         performance: reconcileExplicitPerformance({
           expectedResult: base.investmentResult,
           transactions,
-          // La caja queda fuera: su variación, sobre todo por tipo de cambio, se explica después.
           openingPositions: openingAggregate.positions,
           closingPositions: closingAggregate.positions,
           corporateActions,
           currency: closing.currency,
+          openingCashBalances: openingAggregate.cashBalances,
+          closingCashBalances: closingAggregate.cashBalances,
+          baseCurrency: closing.currency,
+          netContributions: base.netContributions,
         }),
       }
     },
@@ -103,20 +104,3 @@ export const performanceAnalysisService = createPerformanceAnalysisService({
   corporateActions: corporateActionRepository,
 })
 
-function assertExplicitMovementsUseCurrency(
-  transactions: readonly Transaction[],
-  currency: CurrencyCode,
-): void {
-  for (const transaction of transactions) {
-    if (!isExplicit(transaction.type)) continue
-    if (transaction.currency !== currency) {
-      throw new AnalysisError(
-        `El movimiento ${transaction.id} (${transaction.type}) está en ${transaction.currency} y el cierre en ${currency}. No hay conversión de moneda.`,
-      )
-    }
-  }
-}
-
-function isExplicit(type: TransactionType): boolean {
-  return type === 'DIVIDEND' || type === 'INTEREST' || type === 'FEE' || type === 'TAX'
-}
