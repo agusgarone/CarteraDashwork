@@ -1,9 +1,3 @@
-/// <reference types="node" />
-
-import { createRequire } from 'node:module'
-import path from 'node:path'
-import { pathToFileURL } from 'node:url'
-import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { UnreadableDocumentError } from '../errors/parserErrors'
 
 export interface PdfTextItem {
@@ -29,12 +23,7 @@ export interface PdfTextDocument {
  * Las reglas de Balanz no viven acá: si cambia la librería, el parser no cambia.
  */
 export async function extractPdfDocument(data: Uint8Array): Promise<PdfTextDocument> {
-  const document = await getDocument({
-    data: new Uint8Array(data),
-    standardFontDataUrl: pdfjsAssetUrl('standard_fonts'),
-    cMapUrl: pdfjsAssetUrl('cmaps'),
-    cMapPacked: true,
-  }).promise
+  const document = await openPdf(data)
 
   const rows: PdfTextRow[] = []
   for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
@@ -59,12 +48,13 @@ export async function extractPdfText(data: Uint8Array): Promise<string> {
   return document.text
 }
 
-function pdfjsAssetUrl(folder: string): string {
-  const require = createRequire(import.meta.url)
-  const packageJson = require.resolve('pdfjs-dist/package.json')
-  const folderPath = path.join(path.dirname(packageJson), folder)
-  const href = pathToFileURL(folderPath).href
-  return href.endsWith('/') ? href : `${href}/`
+async function openPdf(data: Uint8Array) {
+  if (import.meta.env.MODE === 'test') {
+    const runtime = await import('./pdfjsNode')
+    return runtime.openPdf(data)
+  }
+  const runtime = await import('./pdfjsBrowser')
+  return runtime.openPdf(data)
 }
 
 function itemsToRows(page: number, items: readonly unknown[]): PdfTextRow[] {

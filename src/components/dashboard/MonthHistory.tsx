@@ -10,11 +10,19 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { useImportDialog } from '@/components/import/ImportDialogProvider'
-import { SignedAmount } from '@/components/shared/SignedAmount'
-import type { MonthSnapshot } from '@/types/portfolio'
-import { formatCurrency } from '@/utils/formatCurrency'
+import { SignedDecimal } from '@/components/shared/SignedDecimal'
+import type { OverviewMonth } from '@/application/portfolioOverview'
+import { formatCurrencyARS } from '@/utils/formatCurrency'
 
-export function MonthHistory({ months }: { months: MonthSnapshot[] }) {
+export function MonthHistory({
+  months,
+  selectedId,
+  onSelect,
+}: {
+  months: OverviewMonth[]
+  selectedId: string
+  onSelect: (periodId: string) => void
+}) {
   const { setOpen } = useImportDialog()
 
   return (
@@ -35,23 +43,24 @@ export function MonthHistory({ months }: { months: MonthSnapshot[] }) {
           </TableHeader>
           <TableBody>
             {months.map((month) => (
-              <TableRow key={month.id}>
+              <TableRow
+                key={month.periodId}
+                data-state={month.periodId === selectedId ? 'selected' : undefined}
+                className="cursor-pointer"
+                onClick={() => onSelect(month.periodId)}
+              >
                 <TableCell className="font-medium">{month.label}</TableCell>
                 <TableCell>
-                  {month.status === 'complete' ? (
-                    <Badge variant="secondary">Completo</Badge>
-                  ) : (
-                    <Badge variant="outline">Sin datos</Badge>
-                  )}
+                  <Badge variant="secondary">Completo</Badge>
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
-                  {month.endValue === null ? '—' : formatCurrency(month.endValue)}
+                  {month.closingValue === null ? '—' : formatCurrencyARS(month.closingValue)}
                 </TableCell>
                 <TableCell className="text-right">
-                  {month.netContributions === null ? '—' : <SignedAmount value={month.netContributions} />}
+                  {month.netContributions === null ? '—' : <SignedDecimal value={month.netContributions} />}
                 </TableCell>
                 <TableCell className="text-right">
-                  {month.investmentResult === null ? '—' : <SignedAmount value={month.investmentResult} />}
+                  {month.investmentResult === null ? '—' : <SignedDecimal value={month.investmentResult} />}
                 </TableCell>
               </TableRow>
             ))}

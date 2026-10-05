@@ -1,14 +1,20 @@
 import { cn } from 'cn'
-import { SignedAmount } from '@/components/shared/SignedAmount'
-import type { Category } from '@/types/portfolio'
-import { formatCurrency } from '@/utils/formatCurrency'
+import { SignedDecimal } from '@/components/shared/SignedDecimal'
+import { formatCurrencyARS } from '@/utils/formatCurrency'
+
+export interface CategoryRow {
+  id: string
+  label: string
+  closingValue: string | null
+  valuationChange: string | null
+}
 
 export function CategoryList({
   categories,
   selectedId,
   onSelect,
 }: {
-  categories: Category[]
+  categories: CategoryRow[]
   selectedId: string
   onSelect: (categoryId: string) => void
 }) {
@@ -30,10 +36,12 @@ export function CategoryList({
                   active ? 'bg-muted' : 'hover:bg-muted/60',
                 )}
               >
-                <span className="block text-sm font-medium">{category.name}</span>
-                <span className="mt-1 block text-sm tabular-nums">{formatCurrency(category.currentValue)}</span>
+                <span className="block text-sm font-medium">{category.label}</span>
+                <span className="mt-1 block text-sm tabular-nums">
+                  {category.closingValue ? formatCurrencyARS(category.closingValue) : '—'}
+                </span>
                 <span className="mt-0.5 block text-xs">
-                  <SignedAmount value={category.periodResult} className="text-xs" />
+                  {category.valuationChange ? <SignedDecimal value={category.valuationChange} className="text-xs" /> : '—'}
                 </span>
               </button>
             </li>

@@ -1,6 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useReducer, useRef } from 'react'
 import { AlertCircle, Check, FileText, Loader2 } from 'lucide-react'
-import { cn } from 'cn'
 import { useImportDialog } from '@/components/import/ImportDialogProvider'
 import { Button } from '@/components/ui/button'
 import {
@@ -10,160 +9,185 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { getNextImportLabel } from '@/services/portfolioService'
-import type { DocumentStatus, ImportDocument } from '@/types/import'
-import { formatCurrency } from '@/utils/formatCurrency'
+import { describeImportFailure } from '@/application/importFailure'
+import type { ImportPeriodResultView } from '@/application/importPeriodApplication'
+import {
+  importDialogReducer,
+  importOutcomeCopy,
+  initialImportDialogState,
+} from '@/application/importDialogState'
+import { importFromDesktop } from '@/application/importFromDesktop'
+import { useImportedPeriod } from '@/application/ImportedPeriodProvider'
+import { pickImportDocuments } from '@/application/pickImportDocuments'
+import type { DocumentType } from '@/domain/document'
+import { formatCurrencyARS } from '@/utils/formatCurrency'
 
-const templates: Pick<ImportDocument, 'id' | 'label' | 'description'>[] = [
-  {
-    id: 'posicion-consolidada',
-    label: 'Posición consolidada',
-    description: 'Tenencia al cierre del mes.',
-  },
-  {
-    id: 'resultados-periodo',
-    label: 'Resultados del período',
-    description: 'Resultado realizado y no realizado.',
-  },
-  {
-    id: 'resumen-comitente',
-    label: 'Resumen mensual comitente',
-    description: 'Movimientos de la cuenta comitente.',
-  },
-  {
-    id: 'resumen-cuotapartista',
-    label: 'Resumen mensual cuotapartista',
-    description: 'Movimientos de fondos comunes.',
-  },
+const MONTHS = [
+  'Enero',
+  'Febrero',
+  'Marzo',
+  'Abril',
+  'Mayo',
+  'Junio',
+  'Julio',
+  'Agosto',
+  'Septiembre',
+  'Octubre',
+  'Noviembre',
+  'Diciembre',
 ]
 
-const statusLabel: Record<DocumentStatus, string> = {
-  pending: 'Pendiente',
-  uploaded: 'Archivo cargado',
-  processing: 'Procesando',
-  processed: 'Procesado',
-  error: 'Error',
-}
-
-const acceptedExtensions = ['pdf', 'xls', 'xlsx']
-
-function createDocuments(): ImportDocument[] {
-  return templates.map((template) => ({
-    ...template,
-    status: 'pending',
-    fileName: null,
-    errorMessage: null,
-  }))
-}
-
-function extensionOf(fileName: string) {
-  return fileName.split('.').pop()?.toLowerCase() ?? ''
+const documentLabel: Record<DocumentType, string> = {
+  CONSOLIDATED_POSITION: 'Posición consolidada',
+  MONTHLY_ACCOUNT: 'Resumen mensual',
+  MONTHLY_FUND_STATEMENT: 'Resumen de fondos',
+  PERIOD_RESULTS: 'Resultados del período',
+  OTHER: 'Documento',
 }
 
 export function ImportMonthDialog() {
   const { open, setOpen } = useImportDialog()
+  const { selectImportedPeriod } = useImportedPeriod()
   const wasOpen = useRef(false)
-  const [documents, setDocuments] = useState<ImportDocument[]>(createDocuments)
-  const [phase, setPhase] = useState<'edit' | 'done'>('edit')
-  const [showDifference, setShowDifference] = useState(false)
-  const runId = useRef(0)
+  const remembered = useRef(false)
+  const [state, dispatch] = useReducer(importDialogReducer, initialImportDialogState)
+  const importing = state.status === 'importing'
 
   useEffect(() => {
     if (open && !wasOpen.current) {
-      runId.current += 1
-      setDocuments(createDocuments())
-      setPhase('edit')
-      setShowDifference(false)
+      remembered.current = false
+      dispatch({ type: 'reset' })
     }
     wasOpen.current = open
   }, [open])
 
-  const ready = documents.every((document) => document.status === 'uploaded' || document.status === 'processed')
-  const busy = documents.some((document) => document.status === 'processing')
-
-  function onFile(id: string, file: File | undefined) {
-    if (!file) return
-    const extension = extensionOf(file.name)
-    setDocuments((current) =>
-      current.map((document) => {
-        if (document.id !== id) return document
-        if (!acceptedExtensions.includes(extension)) {
-          return {
-            ...document,
-            status: 'error',
-            fileName: file.name,
-            errorMessage: 'Formato no reconocido. Usá PDF o Excel.',
-          }
-        }
-        return {
-          ...document,
-          status: 'uploaded',
-          fileName: file.name,
-          errorMessage: null,
-        }
-      }),
-    )
-    setPhase('edit')
+  function closeDialog() {
+    if (importing) return
+    if (!remembered.current && (state.status === 'success' || state.status === 'existing')) {
+      remembered.current = true
+      selectImportedPeriod({
+        id: state.result.period.id,
+        year: state.result.period.year,
+        month: state.result.period.month,
+      })
+    }
+    setOpen(false)
   }
 
-  function processPeriod() {
-    const id = runId.current + 1
-    runId.current = id
-    setShowDifference(false)
-    setDocuments((current) =>
-      current.map((document) => ({ ...document, status: 'processing', errorMessage: null })),
-    )
-    window.setTimeout(() => {
-      if (runId.current !== id) return
-      setDocuments((current) =>
-        current.map((document) => ({ ...document, status: 'processed', errorMessage: null })),
-      )
-      setPhase('done')
-    }, 900)
+  async function chooseFiles() {
+    const picked = await pickImportDocuments()
+    if (picked.status === 'unavailable') {
+      dispatch({ type: 'unavailable' })
+      return
+    }
+    if (picked.status === 'selected') dispatch({ type: 'select', files: picked.files })
   }
+
+  async function runImport() {
+    if (state.status !== 'files_selected') return
+    const files = state.files
+    dispatch({ type: 'start' })
+    try {
+      const result = await importFromDesktop(files.map((file) => file.path))
+      dispatch({ type: 'finish', result })
+    } catch (error) {
+      const failure = describeImportFailure(error)
+      dispatch({ type: 'fail', headline: failure.headline, detail: failure.detail })
+    }
+  }
+
+  const files = 'files' in state ? state.files : []
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent className="max-h-[calc(100svh-3rem)] overflow-y-auto sm:max-w-3xl">
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) closeDialog()
+        else setOpen(true)
+      }}
+    >
+      <DialogContent
+        className="max-h-[calc(100svh-3rem)] overflow-y-auto sm:max-w-3xl"
+        showCloseButton={!importing}
+        onEscapeKeyDown={(event) => {
+          if (importing) event.preventDefault()
+        }}
+        onPointerDownOutside={(event) => {
+          if (importing) event.preventDefault()
+        }}
+      >
         <DialogHeader>
           <DialogTitle className="text-lg">Actualizar cartera</DialogTitle>
           <DialogDescription>
-            Importá los documentos de tu broker para incorporar un nuevo período al historial.
+            Elegí los PDF del período. El tipo de cada documento se reconoce por el contenido.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-5">
-          <label className="flex max-w-xs flex-col gap-1.5 text-xs text-muted-foreground">
-            Seleccionar período
-            <select
-              defaultValue="2026-09"
-              className="h-8 rounded-lg border border-input bg-background px-2.5 text-sm text-foreground"
-            >
-              <option value="2026-09">{getNextImportLabel()}</option>
-            </select>
-          </label>
+          <p className="text-sm text-muted-foreground">
+            Posición consolidada de cierre, resumen mensual comitente y resumen de fondos. La posición de apertura es opcional si ese snapshot ya está importado.
+          </p>
 
-          <div>
-            <p className="text-sm font-medium">Documentos esperados para Balanz</p>
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              {documents.map((document) => (
-                <UploadZone key={document.id} document={document} disabled={busy} onFile={onFile} />
-              ))}
-            </div>
+          {state.status === 'unavailable' ? (
+            <p className="rounded-xl bg-muted/50 px-4 py-3 text-sm">
+              La selección de archivos reales está disponible en la aplicación de escritorio.
+            </p>
+          ) : null}
+
+          <div className="flex items-center justify-between gap-3">
+            <Button type="button" variant="outline" disabled={importing} onClick={() => void chooseFiles()}>
+              Seleccionar documentos
+            </Button>
+            {files.length > 0 ? (
+              <span className="text-sm text-muted-foreground">{files.length} archivos seleccionados</span>
+            ) : null}
           </div>
 
-          {phase === 'edit' ? (
-            <div className="flex justify-end">
-              <Button type="button" disabled={!ready || busy} onClick={processPeriod}>
-                {busy && <Loader2 className="animate-spin" />}
-                Procesar período
+          {files.length > 0 ? (
+            <ul className="space-y-2">
+              {files.map((file) => (
+                <li key={file.path} className="flex items-center gap-2 rounded-xl border border-border px-3 py-2 text-sm">
+                  <FileText className="size-4 text-muted-foreground" />
+                  <span className="truncate">{file.name}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+
+          {state.status === 'files_selected' && state.notice ? (
+            <p className="text-sm text-muted-foreground">{state.notice}</p>
+          ) : null}
+
+          {state.status === 'error' ? (
+            <div className="rounded-xl border border-negative/30 bg-negative/5 px-4 py-3 text-sm">
+              <p className="flex items-start gap-2 font-medium">
+                <AlertCircle className="mt-0.5 size-4 text-negative" />
+                {state.headline}
+              </p>
+              {state.detail ? <p className="mt-2 text-muted-foreground">{state.detail}</p> : null}
+            </div>
+          ) : null}
+
+          {state.status === 'success' || state.status === 'existing' ? (
+            <ImportResult result={state.result} />
+          ) : null}
+
+          {state.status === 'success' || state.status === 'existing' ? (
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={closeDialog}>
+                Cerrar
+              </Button>
+              <Button type="button" onClick={closeDialog}>
+                Ver resumen
               </Button>
             </div>
           ) : (
-            <ProcessResult
-              showDifference={showDifference}
-              onToggleDifference={() => setShowDifference((current) => !current)}
-            />
+            <div className="flex justify-end">
+              <Button type="button" disabled={state.status !== 'files_selected'} onClick={() => void runImport()}>
+                {importing && <Loader2 className="animate-spin" />}
+                Importar
+              </Button>
+            </div>
           )}
         </div>
       </DialogContent>
@@ -171,102 +195,56 @@ export function ImportMonthDialog() {
   )
 }
 
-function UploadZone({
-  document,
-  disabled,
-  onFile,
-}: {
-  document: ImportDocument
-  disabled: boolean
-  onFile: (id: string, file: File | undefined) => void
-}) {
-  const inputId = `import-${document.id}`
-  return (
-    <label
-      htmlFor={inputId}
-      className={cn(
-        'flex cursor-pointer flex-col gap-2 rounded-xl border border-dashed border-border bg-background px-4 py-3 transition-colors hover:bg-muted/40',
-        document.status === 'error' && 'border-negative/40 bg-negative/5',
-        document.status === 'processed' && 'border-positive/30 bg-positive/5',
-        disabled && 'pointer-events-none opacity-70',
-      )}
-      onDragOver={(event) => event.preventDefault()}
-      onDrop={(event) => {
-        event.preventDefault()
-        if (disabled) return
-        onFile(document.id, event.dataTransfer.files?.[0])
-      }}
-    >
-      <span className="flex items-start justify-between gap-3">
-        <span>
-          <span className="block text-sm font-medium">{document.label}</span>
-          <span className="mt-0.5 block text-xs text-muted-foreground">{document.description}</span>
-        </span>
-        <StatusIcon status={document.status} />
-      </span>
-      <span className="text-xs text-muted-foreground">
-        {document.fileName ?? 'Arrastrá o seleccioná un archivo'}
-      </span>
-      <span
-        className={cn(
-          'text-xs font-medium',
-          document.status === 'error' && 'text-negative',
-          document.status === 'processed' && 'text-positive',
-          document.status === 'uploaded' && 'text-foreground',
-        )}
-      >
-        {document.errorMessage ?? statusLabel[document.status]}
-      </span>
-      <input
-        id={inputId}
-        type="file"
-        accept=".pdf,.xls,.xlsx"
-        className="sr-only"
-        disabled={disabled}
-        onChange={(event) => onFile(document.id, event.target.files?.[0])}
-      />
-    </label>
-  )
-}
-
-function StatusIcon({ status }: { status: DocumentStatus }) {
-  if (status === 'processing') return <Loader2 className="size-4 animate-spin text-muted-foreground" />
-  if (status === 'processed' || status === 'uploaded') return <Check className="size-4 text-positive" />
-  if (status === 'error') return <AlertCircle className="size-4 text-negative" />
-  return <FileText className="size-4 text-muted-foreground" />
-}
-
-function ProcessResult({
-  showDifference,
-  onToggleDifference,
-}: {
-  showDifference: boolean
-  onToggleDifference: () => void
-}) {
+function ImportResult({ result }: { result: ImportPeriodResultView }) {
+  const copy = importOutcomeCopy(result)
+  const month = MONTHS[result.period.month - 1] ?? String(result.period.month)
   return (
     <div className="rounded-xl bg-muted/50 p-4">
-      <p className="text-sm font-medium">{getNextImportLabel()} procesado correctamente</p>
+      <p className="flex items-start gap-2 text-sm font-medium">
+        <Check className="mt-0.5 size-4 text-positive" />
+        {copy.lead}
+      </p>
+      {copy.note ? <p className="mt-2 text-sm text-muted-foreground">{copy.note}</p> : null}
+      <p className="mt-4 text-sm font-medium">{month} {result.period.year}</p>
       <ul className="mt-3 space-y-1 text-sm text-muted-foreground">
-        <li>4 documentos procesados</li>
-        <li>23 instrumentos encontrados</li>
-        <li>14 operaciones encontradas</li>
-        <li>3 dividendos encontrados</li>
-        <li>Aportes y retiros identificados</li>
+        {result.documents.map((document) => (
+          <li key={`${document.type}-${document.date}-${document.fileName}`}>
+            {documentLabel[document.type]} — {formatDay(document.date)}
+          </li>
+        ))}
+        <li>{result.summary.positionsCount} posiciones</li>
+        <li>{result.summary.transactionsCount} movimientos</li>
+        <li>
+          {result.summary.corporateActionsCount}{' '}
+          {result.summary.corporateActionsCount === 1 ? 'acción corporativa' : 'acciones corporativas'}
+        </li>
       </ul>
-      {showDifference ? (
-        <p className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900">
-          Diferencia sin reconciliar: {formatCurrency(32_410)}
-        </p>
-      ) : (
-        <p className="mt-4 text-sm font-medium text-positive">Reconciliación: Correcta</p>
-      )}
-      <button
-        type="button"
-        className="mt-3 text-xs font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-        onClick={onToggleDifference}
-      >
-        {showDifference ? 'Volver a reconciliación correcta' : 'Ver diferencia sin reconciliar'}
-      </button>
+      {result.analysis ? (
+        <dl className="mt-4 space-y-1 text-sm">
+          <div className="flex justify-between gap-4">
+            <dt className="text-muted-foreground">Resultado de inversiones</dt>
+            <dd>{formatCurrencyARS(result.analysis.expectedResult)}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-muted-foreground">Explicado</dt>
+            <dd>{formatCurrencyARS(result.analysis.explainedResult)}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-muted-foreground">Diferencia</dt>
+            <dd>{formatCurrencyARS(result.analysis.unexplainedDifference)}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-muted-foreground">Estado</dt>
+            <dd>{result.analysis.reconciliationStatus}</dd>
+          </div>
+        </dl>
+      ) : null}
     </div>
   )
+}
+
+function formatDay(isoDate: string): string {
+  const [year, month, day] = isoDate.split('-')
+  if (!year || !month || !day) return isoDate
+  return `${day}/${month}/${year}`
 }

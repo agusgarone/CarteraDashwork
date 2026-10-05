@@ -1,10 +1,3 @@
-/// <reference types="node" />
-
-import { copyFile, mkdir, readFile, rm } from 'node:fs/promises'
-import { constants } from 'node:fs'
-import path from 'node:path'
-import { createHash } from 'node:crypto'
-
 export interface StagedFile {
   originalPath: string
   stagedPath: string
@@ -13,57 +6,49 @@ export interface StagedFile {
 }
 
 /**
- * Copia el archivo del usuario a un staging. No lo mueve ni lo borra.
- * El hash se calcula sobre esa copia.
+ * Lectura y copia de los archivos del usuario.
+ * Los tests usan el disco de Node. La app usa el plugin de archivos de Tauri.
+ * En ambos casos se copian los bytes originales: el texto extraído no se guarda.
  */
-export async function stageUserFile(originalPath: string, stagingDir: string): Promise<StagedFile> {
-  const bytes = new Uint8Array(await readFile(originalPath))
-  const sha256 = createHash('sha256').update(bytes).digest('hex')
-  await mkdir(stagingDir, { recursive: true })
-  const stagedPath = path.join(stagingDir, sha256)
-  await copyFile(originalPath, stagedPath)
-  return { originalPath, stagedPath, bytes, sha256 }
+export interface ImportFileSystem {
+  stage(originalPath: string, stagingDir: string): Promise<StagedFile>
+  publish(appDataDir: string, relativePath: string, stagedPath: string): Promise<{ created: boolean }>
+  removePublished(appDataDir: string, relativePath: string): Promise<void>
+  removeDir(absolutePath: string): Promise<void>
+  join(...parts: string[]): string
+  basename(filePath: string): string
+}
+
+export async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const copy = new Uint8Array(bytes.byteLength)
+  copy.set(bytes)
+  const digest = await crypto.subtle.digest('SHA-256', copy)
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+export function fileNameOf(filePath: string): string {
+  const parts = filePath.split(/[/\\]/)
+  return parts[parts.length - 1] || filePath
 }
 
 /**
- * Publica en documents/YYYY/MM/<hash>-<slug>.ext, siempre con barras normales.
- * Si el destino ya existe, no se pisa: el hash es el nombre.
- * Devuelve si este intento creó el archivo, para poder borrarlo si la base falla.
+ * Conserva la extensión del archivo elegido.
+ * .xlsx queda reservada para cuando exista ese parser: hoy el selector solo ofrece PDF.
  */
-export async function publishDocument(
-  appDataDir: string,
-  relativePath: string,
-  stagedPath: string,
-): Promise<{ created: boolean }> {
-  const absolute = absoluteDataPath(appDataDir, relativePath)
-  await mkdir(path.dirname(absolute), { recursive: true })
-  try {
-    await copyFile(stagedPath, absolute, constants.COPYFILE_EXCL)
-    return { created: true }
-  } catch (error) {
-    if (isAlreadyExists(error)) return { created: false }
-    throw error
-  }
+export function originalExtension(filename: string): string {
+  const base = fileNameOf(filename)
+  const dot = base.lastIndexOf('.')
+  if (dot <= 0) return '.bin'
+  const extension = base.slice(dot).toLowerCase()
+  if (extension === '.pdf' || extension === '.txt' || extension === '.xlsx' || extension === '.xls') return extension
+  return '.bin'
 }
 
-export async function removePublished(appDataDir: string, relativePath: string): Promise<void> {
-  await rm(absoluteDataPath(appDataDir, relativePath), { force: true })
-}
-
-export function documentRelativePath(
-  isoDate: string,
-  sha256: string,
-  slug: string,
-  extension: string,
-): string {
+export function documentRelativePath(isoDate: string, sha256: string, slug: string, extension: string): string {
   const [year, month] = isoDate.split('-')
   return `documents/${year}/${month}/${sha256}-${slug}${extension}`
 }
 
-function absoluteDataPath(appDataDir: string, relativePath: string): string {
-  return path.join(appDataDir, ...relativePath.split('/'))
-}
-
-function isAlreadyExists(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'EEXIST'
+export function absoluteDataPath(appDataDir: string, relativePath: string, join: (...parts: string[]) => string): string {
+  return join(appDataDir, ...relativePath.split('/'))
 }

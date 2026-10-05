@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 import Decimal from 'decimal.js'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { DatabaseClient } from '../database/client'
+import { createDatabaseClient } from '../database/client'
 import { openMemoryDatabase } from '../database/sqliteMemory'
 import { createPerformanceAnalysisService } from '../engine/services/performanceAnalysisService'
 import { createPeriodAnalysisService } from '../engine/services/periodAnalysisService'
@@ -17,6 +18,7 @@ import { createSnapshotRepository } from '../repositories/snapshotRepository'
 import { createTransactionRepository } from '../repositories/transactionRepository'
 import { ImportConflictError, ImportPeriodValidationError } from './importPeriodErrors'
 import { createImportPeriodService } from './importPeriodService'
+import { createNodeImportFiles } from './nodeImportFiles'
 import { persistImportPlan } from './persistence/importPersistenceRepository'
 
 const FIXTURES = path.resolve(
@@ -76,6 +78,10 @@ describe('ImportPeriodService contra SQLite', () => {
       expect(document.local_path.startsWith('documents/')).toBe(true)
       expect(document.local_path.includes('..')).toBe(false)
       expect(/^[a-zA-Z]:/.test(document.local_path)).toBe(false)
+      expect(document.local_path.endsWith('.txt')).toBe(true)
+      const stored = new Uint8Array(await readFile(path.join(world.appData, ...document.local_path.split('/'))))
+      const matchesOriginal = await originalBytes(world.files, stored)
+      expect(matchesOriginal).toBe(true)
     }
     expect(documents.some((document) => document.local_path.includes('/2026/07/'))).toBe(true)
     expect(documents.some((document) => document.local_path.includes('/2026/08/'))).toBe(true)
@@ -223,7 +229,7 @@ describe('ImportPeriodService contra SQLite', () => {
     expect(await count(world.client, 'transactions')).toBe(10)
     expect(await count(world.client, 'corporate_actions')).toBe(1)
     expect(await count(world.client, 'reconciliation_runs')).toBe(1)
-    expect(fourPlaces(again.analysis.performance.unexplainedDifference)).toBe('0.8640')
+    expect(fourPlaces(again.analysis?.performance.unexplainedDifference)).toBe('0.8640')
     world.close()
   })
 
@@ -332,6 +338,39 @@ describe('ImportPeriodService contra SQLite', () => {
     expect(await count(world.client, 'snapshots')).toBe(0)
     world.close()
   })
+
+  it('rechaza el mismo archivo elegido dos veces y no escribe', async () => {
+    const world = await setup()
+    const closing = world.files[1]
+    if (!closing) throw new Error('falta la posición de cierre')
+    const copy = path.join(world.inputDir, 'copia-cierre.txt')
+    await copyFile(closing.originalPath, copy)
+    await expect(
+      world.service.importPeriod({
+        portfolioId: world.portfolioId,
+        files: [...world.files, { originalPath: copy, originalFileName: 'copia-cierre.txt' }],
+      }),
+    ).rejects.toThrow('Seleccionaste dos veces el mismo archivo.')
+    expect(await count(world.client, 'documents')).toBe(0)
+    world.close()
+  })
+
+  it('si el análisis no se guarda, el período queda importado', async () => {
+    const world = await setup()
+    world.service = createImportPeriodService({
+      db: failReconciliationInsert(world.client),
+      appDataDir: world.appData,
+      files: createNodeImportFiles(),
+      now: () => '2026-10-05T18:00:00.000Z',
+    })
+    const imported = await world.service.importPeriod({ portfolioId: world.portfolioId, files: world.files })
+    expect(imported.analysis).toBeNull()
+    const periods = await world.client.select<{ status: string }>('SELECT status FROM periods WHERE month = 8')
+    expect(periods[0]?.status).toBe('COMPLETE')
+    expect(await count(world.client, 'documents')).toBe(4)
+    expect(await count(world.client, 'reconciliation_runs')).toBe(0)
+    world.close()
+  })
 })
 
 async function setup(options?: { beforePersist?: () => void }) {
@@ -363,6 +402,7 @@ async function setup(options?: { beforePersist?: () => void }) {
     service: createImportPeriodService({
       db: database.client,
       appDataDir: appData,
+      files: createNodeImportFiles(),
       now: () => '2026-10-05T18:00:00.000Z',
       beforePersist: options?.beforePersist,
     }),
@@ -394,6 +434,36 @@ async function countWhere(client: DatabaseClient, from: string): Promise<number>
 
 function fourPlaces(value: string | null | undefined): string {
   return new Decimal(value ?? '0').toFixed(4)
+}
+
+async function originalBytes(
+  files: { originalPath: string }[],
+  stored: Uint8Array,
+): Promise<boolean> {
+  for (const file of files) {
+    const original = new Uint8Array(await readFile(file.originalPath))
+    if (original.byteLength === stored.byteLength && original.every((byte, index) => byte === stored[index])) {
+      return true
+    }
+  }
+  return false
+}
+
+function failReconciliationInsert(client: DatabaseClient): DatabaseClient {
+  return createDatabaseClient({
+    select(sql, params) {
+      return client.select(sql, params)
+    },
+    async execute(sql, params) {
+      if (sql.includes('INSERT INTO reconciliation_runs')) {
+        throw new Error('run failed')
+      }
+      return client.execute(sql, params)
+    },
+    transaction(statements) {
+      return client.transaction(statements)
+    },
+  })
 }
 
 async function filesUnder(directory: string): Promise<string[]> {

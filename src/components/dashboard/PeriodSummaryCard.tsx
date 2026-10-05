@@ -1,7 +1,9 @@
+import { Check } from 'lucide-react'
+import { SignedDecimal } from '@/components/shared/SignedDecimal'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { SignedAmount } from '@/components/shared/SignedAmount'
-import type { PortfolioPeriodSummary } from '@/types/portfolio'
-import { formatCurrency } from '@/utils/formatCurrency'
+import { reconciliationNote } from '@/application/overviewCopy'
+import type { PortfolioOverviewView } from '@/application/portfolioOverview'
+import { formatCurrencyARS } from '@/utils/formatCurrency'
 
 function Row({ label, value, emphasize = false }: { label: string; value: string; emphasize?: boolean }) {
   return (
@@ -12,54 +14,56 @@ function Row({ label, value, emphasize = false }: { label: string; value: string
   )
 }
 
-export function PeriodSummaryCard({
-  periodLabel,
-  summary,
-  missingLabels,
-}: {
-  periodLabel: string
-  summary: PortfolioPeriodSummary
-  missingLabels: string[]
-}) {
+export function PeriodSummaryCard({ overview }: { overview: PortfolioOverviewView }) {
+  const { metrics, importStatus } = overview
+  const note = reconciliationNote(importStatus.reconciliationStatus, importStatus.unexplainedDifference)
+
   return (
     <Card className="h-full">
       <CardHeader>
         <CardTitle>Resumen del período</CardTitle>
-        <p className="text-xs text-muted-foreground">{periodLabel}</p>
+        <p className="text-xs text-muted-foreground">{overview.period.label}</p>
       </CardHeader>
       <CardContent className="flex flex-col gap-3 text-sm">
-        <Row label="Inicio del período" value={formatCurrency(summary.startValue)} />
-        <div className="flex items-baseline justify-between gap-4">
-          <span className="text-muted-foreground">Aportes</span>
-          <SignedAmount value={summary.contributions} />
-        </div>
-        <div className="flex items-baseline justify-between gap-4">
-          <span className="text-muted-foreground">Retiros</span>
-          <SignedAmount value={-summary.withdrawals} />
-        </div>
+        <Row
+          label="Inicio del período"
+          value={metrics.openingPortfolioValue ? formatCurrencyARS(metrics.openingPortfolioValue) : '—'}
+        />
+        <Flow label="Aportes" value={metrics.contributions} />
+        <Flow label="Retiros" value={metrics.withdrawals ? negate(metrics.withdrawals) : null} />
         <div className="my-1 border-t border-border" />
-        <div className="flex items-baseline justify-between gap-4">
-          <span className="font-medium">Aporte neto</span>
-          <SignedAmount value={summary.netContributions} className="font-medium" />
-        </div>
-        <div className="flex items-baseline justify-between gap-4">
-          <span className="font-medium">Generado por inversiones</span>
-          <SignedAmount value={summary.investmentResult} className="font-medium" />
-        </div>
-        {summary.unexplainedDifference !== 0 && (
-          <div className="flex items-baseline justify-between gap-4 rounded-lg bg-amber-50 px-2 py-1.5 text-amber-800">
-            <span>Diferencia sin explicar</span>
-            <span className="tabular-nums">{formatCurrency(summary.unexplainedDifference, { signed: true })}</span>
-          </div>
-        )}
+        <Flow label="Aporte neto" value={metrics.netContributions} emphasize />
+        <Flow label="Generado por inversiones" value={metrics.investmentResult} emphasize />
         <div className="my-1 border-t border-border" />
-        <Row label="Final del período" value={formatCurrency(summary.endValue)} emphasize />
-        {missingLabels.length > 0 && (
-          <p className="pt-1 text-xs leading-relaxed text-muted-foreground">
-            {missingLabels.join(', ')} no tiene datos cargados. Esos meses no entran en los totales.
-          </p>
-        )}
+        <Row label="Final del período" value={formatCurrencyARS(metrics.currentPortfolioValue)} emphasize />
+        {note ? <p className="text-xs leading-relaxed text-muted-foreground">{note}</p> : null}
+        <ul className="space-y-1.5 pt-1">
+          {importStatus.documents.map((document) => (
+            <li key={document.id} className="flex items-center gap-2 text-xs">
+              <Check className={document.present ? 'size-3.5 text-positive' : 'size-3.5 text-muted-foreground'} />
+              <span className={document.present ? '' : 'text-muted-foreground'}>
+                {document.present ? document.label : `${document.label} — no importado`}
+              </span>
+            </li>
+          ))}
+        </ul>
       </CardContent>
     </Card>
   )
+}
+
+function Flow({ label, value, emphasize = false }: { label: string; value: string | null; emphasize?: boolean }) {
+  return (
+    <div className="flex items-baseline justify-between gap-4">
+      <span className={emphasize ? 'font-medium' : 'text-muted-foreground'}>{label}</span>
+      {value ? <SignedDecimal value={value} className={emphasize ? 'font-medium' : undefined} /> : <span>—</span>}
+    </div>
+  )
+}
+
+function negate(value: string): string {
+  const trimmed = value.trim()
+  if (trimmed.startsWith('-')) return trimmed.slice(1)
+  if (!/[1-9]/.test(trimmed)) return trimmed
+  return `-${trimmed}`
 }

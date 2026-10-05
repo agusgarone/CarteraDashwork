@@ -7,6 +7,7 @@ import { corporateActionRepository } from '../../repositories/corporateActionRep
 import { periodRepository } from '../../repositories/periodRepository'
 import { snapshotRepository } from '../../repositories/snapshotRepository'
 import { transactionRepository } from '../../repositories/transactionRepository'
+import { calculateModifiedDietz } from '../calculations/modifiedDietz'
 import { reconcileExplicitPerformance } from '../calculations/explicitPerformance'
 import {
   AnalysisError,
@@ -76,9 +77,17 @@ export function createPerformanceAnalysisService(
       }
 
       const corporateActions = await dependencies.corporateActions.getByPeriod(periodId)
+      const periodReturn = calculateModifiedDietz({
+        investmentResult: base.investmentResult,
+        openingValue: base.openingValue,
+        openingDate: opening.date,
+        closingDate: closing.date,
+        transactions,
+      })
 
       return {
         base,
+        periodReturn,
         performance: reconcileExplicitPerformance({
           expectedResult: base.investmentResult,
           transactions,

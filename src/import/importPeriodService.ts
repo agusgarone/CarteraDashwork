@@ -1,5 +1,3 @@
-import path from 'node:path'
-import { rm } from 'node:fs/promises'
 import type { DatabaseClient } from '../database/client'
 import type { EntityId } from '../domain/common'
 import type { InstrumentCategory } from '../domain/instrument'
@@ -18,7 +16,7 @@ import { createSnapshotRepository } from '../repositories/snapshotRepository'
 import { createTransactionRepository } from '../repositories/transactionRepository'
 import { adaptConsolidatedPosition } from './adapters/consolidatedPositionAdapter'
 import { adaptMonthlyAccount } from './adapters/monthlyAccountAdapter'
-import { publishDocument, removePublished } from './documentStore'
+import type { ImportFileSystem } from './documentStore'
 import { fundMatchKeyFromConsolidatedName } from './fundIdentity'
 import { ImportConflictError, ImportPeriodValidationError } from './importPeriodErrors'
 import { PARSER_VERSION } from './parserVersion'
@@ -51,7 +49,7 @@ export interface ImportPeriodResult {
   periodId: EntityId
   openingSnapshotId: EntityId
   closingSnapshotId: EntityId
-  analysis: PeriodPerformanceAnalysis
+  analysis: PeriodPerformanceAnalysis | null
 }
 
 export interface ImportPeriodService {
@@ -61,6 +59,7 @@ export interface ImportPeriodService {
 export interface ImportPeriodServiceOptions {
   db: DatabaseClient
   appDataDir: string
+  files: ImportFileSystem
   now?: () => string
   /** Se ejecuta después de copiar los archivos y antes de la transacción. Los tests lo usan para forzar un fallo. */
   beforePersist?: () => Promise<void> | void
@@ -71,8 +70,9 @@ export interface ImportPeriodServiceOptions {
  *
  * La base y el disco no comparten una transacción. Si el insert falla, se borran solo
  * los archivos que este intento creó. El original del usuario no se mueve.
- * La corrida de reconciliación se escribe después del COMMIT. Si ese segundo insert
- * falla, un reintento del mismo set la completa sin duplicar documentos: el hash sigue siendo único.
+ * La corrida de reconciliación se escribe después del COMMIT. Si ese segundo paso
+ * falla, el período queda importado y el resultado vuelve con analysis en null.
+ * Un reintento del mismo set completa el análisis sin duplicar documentos.
  *
  * Volver a importar los mismos archivos devuelve el período existente.
  * Otro hash para la misma fecha de snapshot es un conflicto y no pisa nada.
@@ -95,25 +95,25 @@ export function createImportPeriodService(options: ImportPeriodServiceOptions): 
         throw new ImportPeriodValidationError('La cartera no existe.')
       }
 
-      const stagingDir = path.join(options.appDataDir, 'staging')
+      const fileSystem = options.files
+      const stagingDir = fileSystem.join(options.appDataDir, 'staging')
       const createdFiles: string[] = []
       let persisted = false
       try {
-        const prepared = await prepareImportPeriod(input.files, stagingDir)
+        const prepared = await prepareImportPeriod(input.files, stagingDir, fileSystem)
         await rememberExistingDocuments(prepared, input.portfolioId)
         const reusedOpeningId = await resolveOpening(prepared, input.portfolioId)
         await assertPeriodIsNewOrSameFiles(prepared, input.portfolioId)
 
         const alreadyImported = await existingImport(prepared, input.portfolioId, reusedOpeningId)
         if (alreadyImported) {
-          const analysis = await analyzeFromDatabase(db, alreadyImported.periodId)
-          await ensureReconciliation(alreadyImported.periodId, analysis)
+          const analysis = await readAnalysis(alreadyImported.periodId)
           return { outcome: 'existing', ...alreadyImported, analysis }
         }
 
         for (const file of prepared.files) {
           if (file.existingDocumentId) continue
-          const published = await publishDocument(options.appDataDir, file.relativePath, file.stagedPath)
+          const published = await fileSystem.publish(options.appDataDir, file.relativePath, file.stagedPath)
           if (published.created) createdFiles.push(file.relativePath)
         }
 
@@ -121,8 +121,7 @@ export function createImportPeriodService(options: ImportPeriodServiceOptions): 
         const plan = await buildPlan(prepared, input.portfolioId, reusedOpeningId, options.now?.() ?? new Date().toISOString())
         const saved = await persistImportPlan(db, plan)
         persisted = true
-        const analysis = await analyzeFromDatabase(db, saved.closingPeriodId)
-        await ensureReconciliation(saved.closingPeriodId, analysis)
+        const analysis = await readAnalysis(saved.closingPeriodId)
         return {
           outcome: 'imported',
           periodId: saved.closingPeriodId,
@@ -132,13 +131,24 @@ export function createImportPeriodService(options: ImportPeriodServiceOptions): 
         }
       } catch (error) {
         if (!persisted) {
-          await Promise.all(createdFiles.map((relativePath) => removePublished(options.appDataDir, relativePath)))
+          await Promise.all(createdFiles.map((relativePath) => fileSystem.removePublished(options.appDataDir, relativePath)))
         }
         throw error
       } finally {
-        await rm(stagingDir, { recursive: true, force: true })
+        await fileSystem.removeDir(stagingDir)
       }
     },
+  }
+
+  async function readAnalysis(periodId: EntityId): Promise<PeriodPerformanceAnalysis | null> {
+    try {
+      const analysis = await analyzeFromDatabase(db, periodId)
+      await ensureReconciliation(periodId, analysis)
+      return analysis
+    } catch (error) {
+      console.error('El período quedó importado y el análisis no se guardó.', error)
+      return null
+    }
   }
 
   async function rememberExistingDocuments(prepared: PreparedImport, portfolioId: EntityId): Promise<void> {

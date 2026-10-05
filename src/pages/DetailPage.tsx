@@ -1,11 +1,14 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { Search } from 'lucide-react'
+import { visibleInstruments, type DetailSort } from '@/application/portfolioDetail'
+import { usePortfolioDetail } from '@/application/usePortfolioDetail'
+import { useImportDialog } from '@/components/import/ImportDialogProvider'
 import { CategoryList } from '@/components/portfolio/CategoryList'
 import { InstrumentPanel } from '@/components/portfolio/InstrumentPanel'
 import { InstrumentTable } from '@/components/portfolio/InstrumentTable'
-import { usePeriod } from '@/components/period/PeriodProvider'
-import { SignedAmount } from '@/components/shared/SignedAmount'
+import { SignedDecimal } from '@/components/shared/SignedDecimal'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import {
@@ -15,71 +18,103 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { getCategories, getCategoryDetail, getInstrumentDetail } from '@/services/portfolioService'
-import { formatCurrency } from '@/utils/formatCurrency'
-
-type SortKey = 'position' | 'result' | 'return'
+import { formatCurrencyARS } from '@/utils/formatCurrency'
 
 export function DetailPage() {
-  const { selection } = usePeriod()
-  const categories = getCategories(selection)
-  const [categoryId, setCategoryId] = useState(categories[0]?.id ?? 'cedears')
+  const { screen, retry } = usePortfolioDetail()
+  const { setOpen } = useImportDialog()
+  const [categoryId, setCategoryId] = useState('ALL')
   const [instrumentId, setInstrumentId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
-  const [sortKey, setSortKey] = useState<SortKey>('position')
-
-  const detail = getCategoryDetail(categoryId, selection)
-  const category = detail.category
-  const instrument = instrumentId ? getInstrumentDetail(instrumentId, selection) : null
-  const normalizedQuery = query.trim().toLowerCase()
-  const instruments = detail.instruments
-    .filter((item) => {
-      if (!normalizedQuery) return true
-      return (
-        item.ticker.toLowerCase().includes(normalizedQuery) ||
-        item.name.toLowerCase().includes(normalizedQuery)
-      )
-    })
-    .sort((a, b) => {
-      if (sortKey === 'result') return b.result - a.result
-      if (sortKey === 'return') return b.returnPercentage - a.returnPercentage
-      return b.currentValue - a.currentValue
-    })
-
-  function selectCategory(nextId: string) {
-    setCategoryId(nextId)
+  const [sortKey, setSortKey] = useState<DetailSort>('currentValue')
+  const periodId = screen.status === 'ready' ? screen.view.period.id : null
+  const [trackedPeriodId, setTrackedPeriodId] = useState(periodId)
+  if (periodId !== trackedPeriodId) {
+    setTrackedPeriodId(periodId)
+    setCategoryId('ALL')
     setInstrumentId(null)
     setQuery('')
   }
 
+  if (screen.status === 'loading') return <DetailSkeleton />
+  if (screen.status === 'error') {
+    return (
+      <ScreenMessage
+        title="No se pudo mostrar el detalle"
+        body={screen.message}
+        action={<Button type="button" onClick={retry}>Reintentar</Button>}
+      />
+    )
+  }
+  if (screen.status === 'empty') {
+    return (
+      <ScreenMessage
+        title="Aún no hay períodos importados."
+        body="Cuando importes un mes completo, el detalle va a leer esas posiciones."
+        action={<Button type="button" onClick={() => setOpen(true)}>Importar mes</Button>}
+      />
+    )
+  }
+
+  const view = screen.view
+  const selectedCategory = view.categories.find((category) => category.id === categoryId) ?? null
+  const rows = visibleInstruments(view.instruments, { categoryId, query, sort: sortKey })
+  const selected = view.instruments.find((instrument) => instrument.id === instrumentId) ?? null
+  const title = categoryId === 'ALL' ? 'Inversiones' : (selectedCategory?.label ?? 'Inversiones')
+
+  const categories = [
+    {
+      id: 'ALL',
+      label: 'Todas',
+      closingValue: view.totals.investmentValue,
+      valuationChange: view.totals.valuationChange,
+    },
+    ...view.categories.map((category) => ({
+      id: category.id,
+      label: category.label,
+      closingValue: category.closingValue,
+      valuationChange: category.valuationChange,
+    })),
+  ]
+
   return (
     <div className="grid items-start gap-4 lg:grid-cols-[210px_minmax(0,1fr)] xl:grid-cols-[210px_minmax(0,1fr)_300px]">
-      <CategoryList categories={categories} selectedId={categoryId} onSelect={selectCategory} />
+      <CategoryList
+        categories={categories}
+        selectedId={categoryId}
+        onSelect={(nextId) => {
+          setCategoryId(nextId)
+          setInstrumentId(null)
+        }}
+      />
 
       <section className="min-w-0 space-y-4">
         <header>
-          <h1 className="text-2xl font-semibold tracking-tight">{category?.name}</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{view.period.label}</p>
         </header>
-        {category && (
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <Metric label="Total actual" value={formatCurrency(category.currentValue)} />
-            <Metric label="Capital invertido" value={formatCurrency(category.investedCapital)} />
-            <Metric
-              label="Resultado"
-              value={<SignedAmount value={category.result} className="text-xl font-semibold tracking-tight" />}
-            />
-            <Metric
-              label="Rendimiento"
-              value={
-                <SignedAmount
-                  value={category.returnPercentage}
-                  format="percentage"
-                  className="text-xl font-semibold tracking-tight"
-                />
-              }
-            />
-          </div>
-        )}
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {categoryId === 'ALL' ? (
+            <>
+              <Metric label="Valor de inversiones" value={money(view.totals.investmentValue)} />
+              <Metric label="Patrimonio total" value={formatCurrencyARS(view.totals.portfolioValue)} />
+              <Metric label="Variación de valuación" value={signed(view.totals.valuationChange)} />
+              <Metric label="Posiciones" value={String(view.instruments.length)} />
+            </>
+          ) : (
+            <>
+              <Metric label="Valor de cierre" value={money(selectedCategory?.closingValue ?? null)} />
+              <Metric label="Valor de apertura" value={money(selectedCategory?.openingValue ?? null)} />
+              <Metric label="Variación de valuación" value={signed(selectedCategory?.valuationChange ?? null)} />
+              <Metric label="Posiciones" value={String(selectedCategory?.positionCount ?? 0)} />
+            </>
+          )}
+        </div>
+        {categoryId === 'ALL' ? (
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            El patrimonio total incluye la liquidez. Esta pantalla lista las inversiones.
+          </p>
+        ) : null}
 
         <Card>
           <CardContent className="space-y-4">
@@ -95,42 +130,30 @@ export function DetailPage() {
                     className="w-56 pl-8"
                   />
                 </div>
-                <Select value={sortKey} onValueChange={(value) => setSortKey(value as SortKey)}>
-                  <SelectTrigger className="w-[180px]" aria-label="Ordenar por">
+                <Select value={sortKey} onValueChange={(value) => setSortKey(value as DetailSort)}>
+                  <SelectTrigger className="w-[200px]" aria-label="Ordenar por">
                     <SelectValue placeholder="Ordenar por" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="position">Mayor posición</SelectItem>
-                    <SelectItem value="result">Mayor resultado</SelectItem>
-                    <SelectItem value="return">Mayor rendimiento</SelectItem>
+                    <SelectItem value="currentValue">Mayor valor actual</SelectItem>
+                    <SelectItem value="valuationChange">Mayor variación</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </div>
-            <InstrumentTable
-              instruments={instruments}
-              selectedId={instrumentId}
-              onSelect={setInstrumentId}
-            />
+            <InstrumentTable instruments={rows} selectedId={instrumentId} onSelect={setInstrumentId} />
           </CardContent>
         </Card>
       </section>
 
       <div className="min-w-0 lg:col-start-2 xl:col-start-auto">
-        {instrument ? (
-          <InstrumentPanel
-            key={instrument.instrument.id}
-            instrument={instrument.instrument}
-            origin={instrument.origin}
-            periodTransactions={instrument.periodTransactions}
-            allTransactions={instrument.allTransactions}
-            onClose={() => setInstrumentId(null)}
-          />
+        {selected ? (
+          <InstrumentPanel key={selected.id} instrument={selected} onClose={() => setInstrumentId(null)} />
         ) : (
           <aside className="rounded-xl bg-card p-5 text-sm text-muted-foreground ring-1 ring-foreground/10">
             <p className="font-medium text-foreground">Instrumento</p>
             <p className="mt-2 leading-relaxed">
-              Seleccioná una fila para ver de dónde sale su resultado, sin salir de esta pantalla.
+              Seleccioná una fila para ver de dónde sale su variación, sin salir de esta pantalla.
             </p>
           </aside>
         )}
@@ -139,11 +162,40 @@ export function DetailPage() {
   )
 }
 
+function money(value: string | null) {
+  return value ? formatCurrencyARS(value) : '—'
+}
+
+function signed(value: string | null) {
+  return value ? <SignedDecimal value={value} className="text-xl font-semibold tracking-tight" /> : '—'
+}
+
 function Metric({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="rounded-xl bg-card px-4 py-3 ring-1 ring-foreground/10">
       <p className="text-xs text-muted-foreground">{label}</p>
       <p className="mt-1 text-xl font-semibold tracking-tight tabular-nums">{value}</p>
+    </div>
+  )
+}
+
+function ScreenMessage({ title, body, action }: { title: string; body: string; action: ReactNode }) {
+  return (
+    <Card>
+      <CardContent className="space-y-4 py-8">
+        <p className="text-base font-medium">{title}</p>
+        <p className="text-sm text-muted-foreground">{body}</p>
+        {action}
+      </CardContent>
+    </Card>
+  )
+}
+
+function DetailSkeleton() {
+  return (
+    <div className="grid gap-4 lg:grid-cols-[210px_minmax(0,1fr)]" aria-busy="true" aria-live="polite">
+      <div className="h-80 animate-pulse rounded-xl bg-muted" />
+      <div className="h-80 animate-pulse rounded-xl bg-muted" />
     </div>
   )
 }

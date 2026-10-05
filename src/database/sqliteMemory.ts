@@ -9,12 +9,30 @@ import {
 } from './client'
 import { applySqlMigrations } from './applyMigrations'
 
+export interface NodeDatabase {
+  client: DatabaseClient
+  /**
+   * Copia consistente mientras esta conexión sigue abierta.
+   * `VACUUM INTO` escribe otro archivo. No copia el archivo en uso.
+   */
+  snapshot(destination: string): void
+  close: () => void
+}
+
 /**
  * SQLite en memoria con el schema de la aplicación.
  * Sirve para tests. No abre cartera.db.
  */
-export function openMemoryDatabase(): { client: DatabaseClient; close: () => void } {
-  const sqlite = new DatabaseSync(':memory:')
+export function openMemoryDatabase(): NodeDatabase {
+  return openNodeDatabase(new DatabaseSync(':memory:'))
+}
+
+/** Abre un archivo SQLite ya creado o uno nuevo y aplica las migraciones que falten. */
+export function openFileDatabase(filePath: string): NodeDatabase {
+  return openNodeDatabase(new DatabaseSync(filePath))
+}
+
+function openNodeDatabase(sqlite: DatabaseSync): NodeDatabase {
   applySqlMigrations(sqlite)
 
   function run(sql: string, params: SqlParam[]) {
@@ -63,6 +81,10 @@ export function openMemoryDatabase(): { client: DatabaseClient; close: () => voi
 
   return {
     client,
+    snapshot(destination: string) {
+      const sqlPath = destination.replaceAll('\\', '/').replaceAll("'", "''")
+      sqlite.exec(`VACUUM INTO '${sqlPath}'`)
+    },
     close() {
       sqlite.close()
     },

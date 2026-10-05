@@ -1,3 +1,7 @@
+/**
+ * Datos ilustrativos que ya no alimentan ninguna pantalla.
+ * Resumen y Detalle leen SQLite. Este módulo queda solo como referencia del diseño anterior.
+ */
 import {
   LAST_LOADED_LABEL,
   LAST_LOADED_MONTH_ID,

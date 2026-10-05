@@ -230,7 +230,7 @@ function actionsFor(
   return corporateActions.filter((action) => action.instrumentId === instrumentId)
 }
 
-function isIncludedInValuation(status: PositionValuationStatus): boolean {
+export function isIncludedInValuation(status: PositionValuationStatus): boolean {
   return status === 'EXPLAINED' || status === 'CORPORATE_ACTION_EXPLAINED'
 }
 

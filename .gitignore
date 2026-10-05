@@ -1,5 +1,6 @@
-# Estados de cuenta reales. Los fixtures sanitizados sí se versionan.
+# Estados de cuenta reales y copias locales de los PDF. Los fixtures sanitizados sí se versionan.
 src/parsers/balanz/fixtures/private/
+public/pdfjs/
 src/parsers/balanz/fixtures/public/
 
 # Logs

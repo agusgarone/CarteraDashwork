@@ -99,6 +99,14 @@ describe('fixture real julio → agosto 2026', () => {
     expect(exact(analysis.performance.explainedResult)).toBe('179958.1360')
     expect(exact(analysis.performance.unexplainedDifference)).toBe('0.8640')
     expect(analysis.performance.unexplainedDifference).not.toBe('0.00')
+    expect(analysis.periodReturn.status).toBe('CALCULATED')
+    if (analysis.periodReturn.status === 'CALCULATED') {
+      expect(analysis.periodReturn.method).toBe('MODIFIED_DIETZ')
+      expect(analysis.periodReturn.numerator).toBe(analysis.base.investmentResult)
+      expect(new Decimal(analysis.periodReturn.weightedCapital).toFixed(10)).toBe('26663706.4193548387')
+      expect(analysis.periodReturn.returnDecimal.startsWith('0.006749211725')).toBe(true)
+      expect(analysis.periodReturn.externalFlows).toHaveLength(2)
+    }
     expect(exact(analysis.performance.cash.attribution?.fxValuationChange)).toBe('3077.6256')
     expect(analysis.performance.cash.attribution?.dividends).toBe('0.00')
     expect(analysis.performance.cash.attribution?.interest).toBe('0.00')

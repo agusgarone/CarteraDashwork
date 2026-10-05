@@ -77,24 +77,42 @@ pub async fn apply_schema(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             continue;
         }
 
-        let mut tx = pool.begin().await?;
-        sqlx::raw_sql(sql).execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO schema_migrations (version) VALUES ($1)")
-            .bind(version)
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
+        apply_transaction_migration(pool, sql, version).await?;
     }
+    Ok(())
+}
+
+async fn apply_transaction_migration(
+    pool: &SqlitePool,
+    sql: &str,
+    version: &str,
+) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    sqlx::raw_sql(sql).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO schema_migrations (version) VALUES ($1)")
+        .bind(version)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
     Ok(())
 }
 
 pub async fn initialize(app_config_dir: &Path) -> Result<SqlitePool, String> {
     std::fs::create_dir_all(app_config_dir).map_err(|error| error.to_string())?;
-    let pool = connect(connect_options(&app_config_dir.join("cartera.db")))
-        .await
-        .map_err(|error| error.to_string())?;
+    let database_path = app_config_dir.join("cartera.db");
+    // Si el archivo existe y está dañado, connect falla y el archivo queda donde está.
+    // No se borra ni se reemplaza por una base nueva.
+    let options = connect_options(&database_path).create_if_missing(!database_path.exists());
+    let pool = connect(options).await.map_err(|error| error.to_string())?;
     apply_schema(&pool).await.map_err(|error| error.to_string())?;
     Ok(pool)
+}
+
+pub async fn count_portfolios(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM portfolios")
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0)
 }
 
 pub async fn select(

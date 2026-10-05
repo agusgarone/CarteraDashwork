@@ -16,6 +16,8 @@ export type {
   StablePositionInput,
 } from './calculations/positionValuation'
 export type { ExplicitPerformanceInput } from './calculations/explicitPerformance'
+export { calculateModifiedDietz } from './calculations/modifiedDietz'
+export type { ModifiedDietzInput } from './calculations/modifiedDietz'
 export { aggregateExternalFlows, resolveExternalFlowAmount } from './calculations/externalFlows'
 export type { ExternalFlows } from './calculations/externalFlows'
 export {
@@ -49,6 +51,7 @@ export type {
   PositionValuationResult,
   PositionValuationStatus,
 } from './models/positionValuation'
+export type { PeriodReturnResult } from './models/periodReturn'
 export type { PeriodBaseResult } from './models/periodBaseResult'
 export type { PeriodPerformanceAnalysis } from './models/periodPerformance'
 export { ENGINE_VERSION } from './version'

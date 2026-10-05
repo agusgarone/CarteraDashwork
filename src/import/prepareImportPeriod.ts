@@ -1,6 +1,3 @@
-/// <reference types="node" />
-
-import path from 'node:path'
 import type { DocumentType } from '../domain/document'
 import { parseBalanzConsolidatedPositionDocument, parseBalanzConsolidatedPositionText } from '../parsers/balanz/consolidatedPosition'
 import { parseBalanzMonthlyAccountDocument, parseBalanzMonthlyAccountText } from '../parsers/balanz/monthlyAccount'
@@ -13,7 +10,7 @@ import type { ParsedMonthlyAccount } from '../parsers/models/parsedMonthlyAccoun
 import type { ParsedMonthlyFundStatement } from '../parsers/models/parsedMonthlyFundStatement'
 import { extractPdfDocument, type PdfTextDocument } from '../parsers/text/extractPdfText'
 import { detectBalanzDocument, type ImportableDocumentType } from './detectDocument'
-import { documentRelativePath, stageUserFile } from './documentStore'
+import { documentRelativePath, originalExtension, type ImportFileSystem } from './documentStore'
 import { enrichFundPositions, type FundEnrichmentResult } from './enrichment/enrichFundPositions'
 import { ImportPeriodValidationError } from './importPeriodErrors'
 
@@ -61,10 +58,19 @@ const SLUG: Record<ImportableDocumentType, string> = {
  * Copia cada archivo a staging, detecta el tipo por el contenido y arma el período.
  * Todavía no escribe SQLite. El nombre del archivo no decide el tipo ni la fecha.
  */
-export async function prepareImportPeriod(files: ImportFile[], stagingDir: string): Promise<PreparedImport> {
+export async function prepareImportPeriod(
+  files: ImportFile[],
+  stagingDir: string,
+  fileSystem: ImportFileSystem,
+): Promise<PreparedImport> {
   const inputs: ParsedInput[] = []
+  const seenHashes = new Set<string>()
   for (const file of files) {
-    const staged = await stageUserFile(file.originalPath, stagingDir)
+    const staged = await fileSystem.stage(file.originalPath, stagingDir)
+    if (seenHashes.has(staged.sha256)) {
+      throw new ImportPeriodValidationError('Seleccionaste dos veces el mismo archivo.')
+    }
+    seenHashes.add(staged.sha256)
     const pdf = isPdf(staged.bytes) ? await extractPdfDocument(staged.bytes) : null
     const text = pdf ? pdf.text : new TextDecoder('utf8').decode(staged.bytes)
     const detected = detectBalanzDocument(text)
@@ -75,10 +81,10 @@ export async function prepareImportPeriod(files: ImportFile[], stagingDir: strin
       throw new ImportPeriodValidationError(`${file.originalFileName} no coincide con el tipo indicado.`)
     }
     inputs.push({
-      originalFileName: path.basename(file.originalFileName),
+      originalFileName: fileSystem.basename(file.originalFileName),
       stagedPath: staged.stagedPath,
       sha256: staged.sha256,
-      extension: extensionOf(file.originalFileName),
+      extension: originalExtension(file.originalFileName),
       kind: detected,
       text,
       pdf,
@@ -200,12 +206,6 @@ function parseFund(input: ParsedInput): ParsedMonthlyFundStatement {
 function yearMonth(isoDate: string): { year: number; month: number } {
   const [year, month] = isoDate.split('-')
   return { year: Number(year), month: Number(month) }
-}
-
-function extensionOf(filename: string): string {
-  const extension = path.extname(filename).toLowerCase()
-  if (extension === '.pdf' || extension === '.txt') return extension
-  return '.bin'
 }
 
 function isPdf(bytes: Uint8Array): boolean {

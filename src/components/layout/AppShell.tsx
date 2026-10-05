@@ -1,19 +1,30 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { Upload } from 'lucide-react'
 import { cn } from 'cn'
+import { usePortfolioOverview } from '@/application/PortfolioOverviewProvider'
 import { ImportMonthDialog } from '@/components/import/ImportMonthDialog'
 import { useImportDialog } from '@/components/import/ImportDialogProvider'
-import { PeriodSelector } from '@/components/period/PeriodSelector'
+import { HomePeriodSelector } from '@/components/period/HomePeriodSelector'
+import { AppHealthBanner } from '@/components/layout/AppHealthBanner'
 import { Button } from '@/components/ui/button'
-import { getLastLoadLabel } from '@/services/portfolioService'
 
 const links = [
   { to: '/', label: 'Resumen', end: true },
   { to: '/detalle', label: 'Detalle', end: false },
+  { to: '/datos', label: 'Datos', end: false },
 ]
 
 export function AppShell() {
   const { setOpen } = useImportDialog()
+  const { screen } = usePortfolioOverview()
+  const lastLoad =
+    screen.status === 'ready'
+      ? screen.view.period.label
+      : screen.status === 'empty'
+        ? 'Sin períodos'
+        : screen.status === 'loading'
+          ? '…'
+          : '—'
 
   return (
     <div className="min-h-svh bg-background text-foreground">
@@ -46,9 +57,9 @@ export function AppShell() {
           </div>
 
           <div className="ml-auto flex flex-wrap items-center gap-3">
-            <PeriodSelector />
+            <HomePeriodSelector />
             <p className="text-xs text-muted-foreground">
-              Última carga: <span className="text-foreground">{getLastLoadLabel()}</span>
+              Última carga: <span className="text-foreground">{lastLoad}</span>
             </p>
             <Button type="button" onClick={() => setOpen(true)}>
               <Upload />
@@ -59,6 +70,7 @@ export function AppShell() {
       </header>
 
       <main className="mx-auto w-full max-w-[1440px] px-6 py-8 lg:px-10">
+        <AppHealthBanner />
         <Outlet />
       </main>
       <ImportMonthDialog />
