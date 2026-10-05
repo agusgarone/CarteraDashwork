@@ -1,3 +1,7 @@
+# Estados de cuenta reales. Los fixtures sanitizados sí se versionan.
+src/parsers/balanz/fixtures/private/
+src/parsers/balanz/fixtures/public/
+
 # Logs
 logs
 *.log

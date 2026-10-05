@@ -1,8 +1,5 @@
 /// <reference types="node" />
-import { readFileSync } from 'node:fs'
-import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { fileURLToPath } from 'node:url'
 import {
   createDatabaseClient,
   type DatabaseClient,
@@ -10,19 +7,15 @@ import {
   type TransactionParam,
   type TransactionStatement,
 } from './client'
+import { applySqlMigrations } from './applyMigrations'
 
 /**
  * SQLite en memoria con el schema de la aplicación.
  * Sirve para tests. No abre cartera.db.
  */
 export function openMemoryDatabase(): { client: DatabaseClient; close: () => void } {
-  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
-  const schema = readFileSync(
-    path.join(root, 'src-tauri/migrations/001_initial_schema.sql'),
-    'utf8',
-  )
   const sqlite = new DatabaseSync(':memory:')
-  sqlite.exec(schema)
+  applySqlMigrations(sqlite)
 
   function run(sql: string, params: SqlParam[]) {
     const info = sqlite.prepare(sql.replaceAll(/\$\d+/g, '?')).run(...params)

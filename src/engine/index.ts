@@ -51,6 +51,7 @@ export type {
 } from './models/positionValuation'
 export type { PeriodBaseResult } from './models/periodBaseResult'
 export type { PeriodPerformanceAnalysis } from './models/periodPerformance'
+export { ENGINE_VERSION } from './version'
 export {
   createPerformanceAnalysisService,
   performanceAnalysisService,

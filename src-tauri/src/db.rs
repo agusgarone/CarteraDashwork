@@ -6,6 +6,9 @@ use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{Column, Row, Sqlite, SqlitePool, TypeInfo, ValueRef};
 
 const SCHEMA_SQL: &str = include_str!("../migrations/001_initial_schema.sql");
+const PROVENANCE_SQL: &str = include_str!("../migrations/002_import_provenance.sql");
+
+const MIGRATIONS: &[(&str, &str)] = &[("001", SCHEMA_SQL), ("002", PROVENANCE_SQL)];
 
 /// Una referencia al `last_insert_rowid` de una sentencia anterior de la misma transacción.
 #[derive(Debug, Deserialize)]
@@ -44,7 +47,44 @@ pub async fn connect(options: SqliteConnectOptions) -> Result<SqlitePool, sqlx::
 }
 
 pub async fn apply_schema(pool: &SqlitePool) -> Result<(), sqlx::Error> {
-    sqlx::raw_sql(SCHEMA_SQL).execute(pool).await?;
+    sqlx::raw_sql(
+        "CREATE TABLE IF NOT EXISTS schema_migrations (
+            version TEXT PRIMARY KEY,
+            applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );",
+    )
+    .execute(pool)
+    .await?;
+
+    for (version, sql) in MIGRATIONS {
+        let applied: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM schema_migrations WHERE version = $1")
+                .bind(version)
+                .fetch_one(pool)
+                .await?;
+        if applied > 0 {
+            continue;
+        }
+
+        // 001 incluye PRAGMA foreign_keys, que SQLite no acepta dentro de una transacción.
+        // El archivo es idempotente. 002 corre en una transacción y solo se registra si termina.
+        if *version == "001" {
+            sqlx::raw_sql(sql).execute(pool).await?;
+            sqlx::query("INSERT INTO schema_migrations (version) VALUES ($1)")
+                .bind(version)
+                .execute(pool)
+                .await?;
+            continue;
+        }
+
+        let mut tx = pool.begin().await?;
+        sqlx::raw_sql(sql).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO schema_migrations (version) VALUES ($1)")
+            .bind(version)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+    }
     Ok(())
 }
 
@@ -389,5 +429,24 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(rolled_back, 0);
+    }
+
+    #[tokio::test]
+    async fn schema_migrations_records_001_and_002() {
+        let pool = test_pool().await;
+        let versions: Vec<String> =
+            sqlx::query_scalar("SELECT version FROM schema_migrations ORDER BY version")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(versions, vec!["001".to_string(), "002".to_string()]);
+
+        let sources: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'position_field_sources'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(sources, 1);
     }
 }

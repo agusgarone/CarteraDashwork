@@ -12,6 +12,9 @@ fn block_on<F: std::future::Future>(future: F) -> F::Output {
     }
 }
 
+/// TODO: db_select, db_execute y db_transaction aceptan SQL arbitrario desde el webview.
+/// ImportPeriodService no los usa: persiste por repositorios. Hay que cerrar esta superficie
+/// antes de exponer la app, con comandos específicos en lugar de SQL libre.
 #[tauri::command]
 async fn db_select(
     pool: tauri::State<'_, SqlitePool>,
