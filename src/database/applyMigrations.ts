@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url'
 const MIGRATIONS = [
   ['001', '001_initial_schema.sql'],
   ['002', '002_import_provenance.sql'],
+  ['003', '003_cash_movement_legs.sql'],
+  ['004', '004_trade_cost_components.sql'],
 ] as const
 
 /**

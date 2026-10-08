@@ -6,9 +6,10 @@ export interface PdfTextItem {
   width: number
 }
 
-/** Una fila visual. Conserva la posición horizontal para no mezclar columnas. */
+/** Una fila visual. Conserva X e Y para reconstruir columnas por página. */
 export interface PdfTextRow {
   page: number
+  y: number
   items: PdfTextItem[]
 }
 
@@ -75,6 +76,7 @@ function itemsToRows(page: number, items: readonly unknown[]): PdfTextRow[] {
     .sort((left, right) => right - left)
     .map((y) => ({
       page,
+      y,
       items: (grouped.get(y) ?? []).sort((left, right) => left.x - right.x),
     }))
     .filter((row) => row.items.length > 0)

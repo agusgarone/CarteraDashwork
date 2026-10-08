@@ -101,6 +101,19 @@ export interface ImportCorporateActionRow {
   description: string | null
 }
 
+export interface ImportCashLegRow {
+  operationReference: string | null
+  operationType: string
+  currency: string
+  amount: string
+  date: string
+  role: string
+  commission: string | null
+  vat: string | null
+  marketFees: string | null
+  taxComponent: string | null
+}
+
 export interface ImportPersistencePlan {
   portfolioId: EntityId
   completedAt: string
@@ -110,6 +123,7 @@ export interface ImportPersistencePlan {
   snapshots: ImportSnapshotRow[]
   transactions: ImportTransactionRow[]
   corporateActions: ImportCorporateActionRow[]
+  cashLegs: ImportCashLegRow[]
 }
 
 export interface CompiledImport {
@@ -272,6 +286,28 @@ export function compileImportPlan(plan: ImportPersistencePlan): CompiledImport {
         movement.fxRate,
         ref(documentIndex, plan.documents, movement.documentKey),
         movement.sourceReference,
+      ],
+    })
+  }
+
+  for (const leg of plan.cashLegs) {
+    push(statements, {
+      sql: `INSERT INTO cash_movement_legs (
+              period_id, operation_reference, operation_type, currency, amount, leg_date, role,
+              commission, vat, market_fees, tax_component
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      params: [
+        ref(periodIndex, plan.periods, 'closing'),
+        leg.operationReference,
+        leg.operationType,
+        leg.currency,
+        leg.amount,
+        leg.date,
+        leg.role,
+        leg.commission,
+        leg.vat,
+        leg.marketFees,
+        leg.taxComponent,
       ],
     })
   }

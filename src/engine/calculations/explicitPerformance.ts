@@ -10,6 +10,8 @@ import type {
   PerformanceBreakdown,
   PerformanceReconciliationResult,
 } from '../models/explicitPerformance'
+import { reconcileCashLedger, type CashMovementLeg } from './cashLedger'
+import { analyzePositionValueFlows, summarizePartialAttribution } from './positionValueFlow'
 import { reconcileCash } from './cashReconciliation'
 import {
   analyzePositionValuations,
@@ -28,6 +30,12 @@ export interface ExplicitPerformanceInput {
   baseCurrency?: CurrencyCode
   /** Resultado de PeriodAnalysisService. No se vuelven a sumar aportes y retiros. */
   netContributions?: DecimalString
+  /**
+   * Patas de caja firmadas. Si están presentes y hay compras, ventas,
+   * fondos o conversiones, se cierra la cantidad por moneda y no se
+   * inventa un resultado económico de caja.
+   */
+  cashLegs?: readonly CashMovementLeg[]
 }
 
 /**
@@ -131,6 +139,14 @@ export function reconcileExplicitPerformance(
           currency: requiredCurrency(input.currency),
         })
   const baseCurrency = input.baseCurrency ?? input.currency ?? 'ARS'
+  const positionFlows = analyzePositionValueFlows({
+    openingPositions,
+    closingPositions,
+    transactions: input.transactions,
+    corporateActions: input.corporateActions ?? [],
+    cashLegs: input.cashLegs,
+    baseCurrency,
+  })
   const cash = reconcileCash({
     openingCashBalances: input.openingCashBalances ?? [],
     closingCashBalances: input.closingCashBalances ?? [],
@@ -138,6 +154,50 @@ export function reconcileExplicitPerformance(
     netContributions: input.netContributions ?? '0.00',
     transactions: input.transactions,
   })
+  if (input.cashLegs !== undefined && cash.status === 'HAS_INTERNAL_CASH_MOVEMENTS') {
+    const ledger = reconcileCashLedger({
+      opening: (input.openingCashBalances ?? []).map((balance) => ({
+        currency: balance.currency,
+        amount: balance.amount,
+      })),
+      closing: (input.closingCashBalances ?? []).map((balance) => ({
+        currency: balance.currency,
+        amount: balance.amount,
+      })),
+      legs: input.cashLegs,
+    })
+    const quantitiesClosed = ledger.status === 'RECONCILED' && input.cashLegs.length > 0
+    const partial = summarizePartialAttribution({
+      flows: positionFlows,
+      transactions: input.transactions,
+      baseCurrency,
+      cashPerformancePending: true,
+    })
+    const breakdown: PerformanceBreakdown = {
+      valuationChange: calculateTotalValuationChange(positionResults),
+      cashEconomicResult: null,
+      dividends: '0.00',
+      interest: '0.00',
+      fees: '0.00',
+      taxes: '0.00',
+    }
+    return {
+      expectedResult: formatMonetary(parseDecimal(input.expectedResult)),
+      breakdown,
+      positionResults,
+      cash: quantitiesClosed
+        ? { ...cash, status: 'CASH_LEDGER_RECONCILED', reason: null }
+        : cash,
+      explainedResult: null,
+      unexplainedDifference: null,
+      attributionStatus: 'PENDING',
+      cashLedger: ledger,
+      positionFlows,
+      partialExplainedResult: partial.partialExplainedResult,
+      pendingAttribution: partial.pendingAttribution,
+    }
+  }
+
   const explicit =
     cash.cashEconomicResult === null
       ? explicitBreakdownWhenCashIsInvalid(input.transactions, baseCurrency)
@@ -163,6 +223,11 @@ export function reconcileExplicitPerformance(
     cash,
     explainedResult,
     unexplainedDifference: calculateUnexplainedDifference(input.expectedResult, explainedResult),
+    attributionStatus: 'AVAILABLE',
+    cashLedger: null,
+    positionFlows,
+    partialExplainedResult: null,
+    pendingAttribution: null,
   }
 }
 

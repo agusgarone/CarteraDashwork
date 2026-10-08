@@ -16,7 +16,12 @@ function Row({ label, value, emphasize = false }: { label: string; value: string
 
 export function PeriodSummaryCard({ overview }: { overview: PortfolioOverviewView }) {
   const { metrics, importStatus } = overview
-  const note = reconciliationNote(importStatus.reconciliationStatus, importStatus.unexplainedDifference)
+  const note = reconciliationNote(
+    importStatus.reconciliationStatus,
+    importStatus.unexplainedDifference,
+    importStatus.performanceAttribution,
+    importStatus.positionAttribution,
+  )
 
   return (
     <Card className="h-full">

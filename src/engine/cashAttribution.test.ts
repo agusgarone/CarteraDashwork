@@ -163,12 +163,12 @@ describe('atribución de caja', () => {
     expect(result.explainedResult).toBe(result.breakdown.cashEconomicResult)
     expect(four(result.breakdown.dividends)).toBe('1000.0000')
     expect(
-      new Decimal(result.explainedResult).eq(
+      new Decimal(result.explainedResult ?? '0').eq(
         new Decimal(result.breakdown.cashEconomicResult ?? '0').plus(result.breakdown.dividends),
       ),
     ).toBe(false)
     expect(
-      new Decimal(result.explainedResult).eq(
+      new Decimal(result.explainedResult ?? '0').eq(
         new Decimal(result.breakdown.cashEconomicResult ?? '0').plus(
           result.cash.attribution?.fxValuationChange ?? '0',
         ),

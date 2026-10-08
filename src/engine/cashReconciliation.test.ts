@@ -192,7 +192,7 @@ describe('caja dentro del resultado explicado', () => {
     expect(four(result.unexplainedDifference)).toBe('171534.7840')
     expect(result.explainedResult).not.toBe(result.cash.totalCashValueChange)
     expect(
-      new Decimal(result.explainedResult).eq(
+      new Decimal(result.explainedResult ?? '0').eq(
         new Decimal(result.cash.cashEconomicResult ?? '0').plus(result.cash.fxValuationChange),
       ),
     ).toBe(false)

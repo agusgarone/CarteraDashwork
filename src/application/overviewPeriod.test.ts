@@ -103,7 +103,7 @@ describe('reconciliationNote', () => {
 
   it('separa un análisis no reconciliable de una importación vacía', () => {
     expect(reconciliationNote('FAILED', '10.00')).toBe(
-      'Los datos del período están importados. El análisis no se pudo reconciliar.',
+      'Los datos se importaron correctamente. Este período contiene operaciones que todavía no pueden reconciliarse automáticamente.',
     )
   })
 

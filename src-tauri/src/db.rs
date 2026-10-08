@@ -7,8 +7,15 @@ use sqlx::{Column, Row, Sqlite, SqlitePool, TypeInfo, ValueRef};
 
 const SCHEMA_SQL: &str = include_str!("../migrations/001_initial_schema.sql");
 const PROVENANCE_SQL: &str = include_str!("../migrations/002_import_provenance.sql");
+const CASH_LEGS_SQL: &str = include_str!("../migrations/003_cash_movement_legs.sql");
+const TRADE_COSTS_SQL: &str = include_str!("../migrations/004_trade_cost_components.sql");
 
-const MIGRATIONS: &[(&str, &str)] = &[("001", SCHEMA_SQL), ("002", PROVENANCE_SQL)];
+const MIGRATIONS: &[(&str, &str)] = &[
+    ("001", SCHEMA_SQL),
+    ("002", PROVENANCE_SQL),
+    ("003", CASH_LEGS_SQL),
+    ("004", TRADE_COSTS_SQL),
+];
 
 /// Una referencia al `last_insert_rowid` de una sentencia anterior de la misma transacción.
 #[derive(Debug, Deserialize)]
@@ -457,7 +464,15 @@ mod tests {
                 .fetch_all(&pool)
                 .await
                 .unwrap();
-        assert_eq!(versions, vec!["001".to_string(), "002".to_string()]);
+        assert_eq!(
+            versions,
+            vec![
+                "001".to_string(),
+                "002".to_string(),
+                "003".to_string(),
+                "004".to_string(),
+            ]
+        );
 
         let sources: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'position_field_sources'",
@@ -466,5 +481,13 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(sources, 1);
+
+        let legs: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'cash_movement_legs'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(legs, 1);
     }
 }

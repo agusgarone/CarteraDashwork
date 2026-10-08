@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use sqlx::SqlitePool;
 
-pub const EXPECTED_MIGRATIONS: &[&str] = &["001", "002"];
+pub const EXPECTED_MIGRATIONS: &[&str] = &["001", "002", "003", "004"];
 
 pub struct HealthReport {
     pub ok: bool,

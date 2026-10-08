@@ -212,7 +212,7 @@ export function expectSourceIdentity(analysis: ParsedPeriodAnalysis): void {
 export function expectNoDoubleCounting(analysis: ParsedPeriodAnalysis): void {
   const valuation = new Decimal(analysis.performance.breakdown.valuationChange)
   const cashEconomic = new Decimal(analysis.performance.breakdown.cashEconomicResult ?? '0')
-  const explained = new Decimal(analysis.performance.explainedResult)
+  const explained = new Decimal(analysis.performance.explainedResult ?? '0')
   const countedAgain = valuation
     .plus(cashEconomic)
     .plus(analysis.performance.breakdown.dividends)

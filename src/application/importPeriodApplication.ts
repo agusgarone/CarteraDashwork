@@ -5,6 +5,7 @@ import type { ImportFileSystem } from '../import/documentStore'
 import { fileNameOf } from '../import/documentStore'
 import { createImportPeriodService } from '../import/importPeriodService'
 import { reconciliationStatus } from '../import/reconciliationPolicy'
+import { formatReturnPercent } from '../utils/formatPercentage'
 import { createCorporateActionRepository } from '../repositories/corporateActionRepository'
 import { createDocumentRepository } from '../repositories/documentRepository'
 import { createPeriodRepository } from '../repositories/periodRepository'
@@ -30,11 +31,16 @@ export interface ImportPeriodResultView {
     transactionsCount: number
     corporateActionsCount: number
   }
+  unsupportedInternalMovements: boolean
+  cashLedgerReconciled: boolean
+  positionAttributionPartial: boolean
+  periodReturnLabel: string | null
   analysis: {
     expectedResult: string
-    explainedResult: string
-    unexplainedDifference: string
-    reconciliationStatus: ReconciliationStatus
+    explainedResult: string | null
+    unexplainedDifference: string | null
+    reconciliationStatus: ReconciliationStatus | null
+    unsupportedInternalMovements: boolean
   } | null
 }
 
@@ -75,6 +81,7 @@ export async function importSelectedDocuments(options: {
   if (!period) {
     throw new Error('El período importado no se puede leer.')
   }
+  const storedTransactions = await transactions.getByPeriod(period.id)
   const closing = await snapshots.getAggregate(imported.closingSnapshotId)
   const opening = await snapshots.getAggregate(imported.openingSnapshotId)
   const listed = new Map<string, { type: DocumentType; fileName: string; date: string }>()
@@ -93,6 +100,14 @@ export async function importSelectedDocuments(options: {
     })
   }
 
+  const cashLedgerReconciled = imported.analysis?.performance.cash.status === 'CASH_LEDGER_RECONCILED'
+  const positionAttributionPartial = imported.analysis?.performance.partialExplainedResult != null
+  const attributionPending = imported.analysis?.performance.attributionStatus === 'PENDING'
+  const periodReturn =
+    imported.analysis?.periodReturn.status === 'CALCULATED'
+      ? imported.analysis.periodReturn.returnDecimal
+      : null
+
   return {
     outcome: imported.outcome === 'existing' ? 'existing' : 'created',
     period: {
@@ -104,16 +119,35 @@ export async function importSelectedDocuments(options: {
     documents: [...listed.values()].sort((left, right) => left.date.localeCompare(right.date) || left.type.localeCompare(right.type)),
     summary: {
       positionsCount: closing?.positions.length ?? 0,
-      transactionsCount: (await transactions.getByPeriod(period.id)).length,
+      transactionsCount: storedTransactions.length,
       corporateActionsCount: (await corporateActions.getByPeriod(period.id)).length,
     },
+    unsupportedInternalMovements:
+      hasInternalMovements(storedTransactions.map((movement) => movement.type)) && !cashLedgerReconciled,
+    cashLedgerReconciled,
+    positionAttributionPartial,
+    periodReturnLabel: periodReturn ? formatReturnPercent(periodReturn) : null,
     analysis: imported.analysis
       ? {
           expectedResult: imported.analysis.performance.expectedResult,
-          explainedResult: imported.analysis.performance.explainedResult,
-          unexplainedDifference: imported.analysis.performance.unexplainedDifference,
-          reconciliationStatus: reconciliationStatus(imported.analysis),
+          explainedResult: attributionPending ? null : imported.analysis.performance.explainedResult,
+          unexplainedDifference: attributionPending ? null : imported.analysis.performance.unexplainedDifference,
+          reconciliationStatus: attributionPending ? null : reconciliationStatus(imported.analysis),
+          unsupportedInternalMovements:
+            imported.analysis.performance.cash.status === 'HAS_INTERNAL_CASH_MOVEMENTS',
         }
       : null,
   }
+}
+
+const INTERNAL_MOVEMENT_TYPES = new Set([
+  'BUY',
+  'SELL',
+  'FUND_SUBSCRIPTION',
+  'FUND_REDEMPTION',
+  'FX_CONVERSION',
+])
+
+function hasInternalMovements(types: readonly string[]): boolean {
+  return types.some((type) => INTERNAL_MOVEMENT_TYPES.has(type))
 }

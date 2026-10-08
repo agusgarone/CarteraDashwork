@@ -4,14 +4,13 @@ import type { CurrencyCode } from '../domain/currency'
 import type { Instrument, InstrumentCategory } from '../domain/instrument'
 import type { Position } from '../domain/snapshot'
 import type { Transaction, TransactionType } from '../domain/transaction'
-import {
-  calculateTotalValuationChange,
-  isIncludedInValuation,
-} from '../engine/calculations/positionValuation'
+import { isIncludedInValuation } from '../engine/calculations/positionValuation'
+import type { PositionValueFlowAnalysis } from '../engine/calculations/positionValueFlow'
 import { formatExact, parseDecimal } from '../engine/money'
 import type { PositionValuationResult, PositionValuationStatus } from '../engine/models/positionValuation'
 import { createPerformanceAnalysisService } from '../engine/services/performanceAnalysisService'
 import { createPeriodAnalysisService, periodStartDate } from '../engine/services/periodAnalysisService'
+import { createCashMovementLegRepository } from '../repositories/cashMovementLegRepository'
 import { createCorporateActionRepository } from '../repositories/corporateActionRepository'
 import { createInstrumentRepository } from '../repositories/instrumentRepository'
 import { createPeriodRepository } from '../repositories/periodRepository'
@@ -99,6 +98,13 @@ export interface InstrumentDetail {
   valuationChange: string | null
   valuationStatus: PositionValuationStatus | null
   statusLabel: string | null
+  boughtQuantity: string | null
+  soldQuantity: string | null
+  subscribedQuantity: string | null
+  quantityStatusLabel: string | null
+  acquisitionFlows: string | null
+  disposalFlows: string | null
+  flowNote: string | null
   movements: DetailMovement[]
   corporateActions: DetailCorporateAction[]
   provenance: string[]
@@ -176,6 +182,7 @@ export async function loadPortfolioDetail(options: {
   const instruments = createInstrumentRepository(db)
   const transactions = createTransactionRepository(db)
   const corporateActions = createCorporateActionRepository(db)
+  const cashLegs = createCashMovementLegRepository(db)
   const sources = createPositionSourceRepository(db)
   const portfolio = (await portfolios.getAll())[0]
   if (!portfolio) return null
@@ -196,11 +203,15 @@ export async function loadPortfolioDetail(options: {
     snapshots,
     transactions,
     corporateActions,
+    cashLegs,
   })
 
   let valuation: PositionValuationResult[] = []
+  let flows: PositionValueFlowAnalysis[] = []
   try {
-    valuation = (await performance.analyzePeriod(selected.id)).performance.positionResults
+    const analysis = await performance.analyzePeriod(selected.id)
+    valuation = analysis.performance.positionResults
+    flows = analysis.performance.positionFlows
   } catch (error) {
     console.error(error)
   }
@@ -208,6 +219,7 @@ export async function loadPortfolioDetail(options: {
   const instrumentRows = await instruments.getAll()
   const byId = new Map(instrumentRows.map((instrument) => [instrument.id, instrument]))
   const valuationById = new Map(valuation.map((result) => [result.instrumentId, result]))
+  const flowById = new Map(flows.map((flow) => [flow.instrumentId, flow]))
   const openingById = new Map((openingAggregate?.positions ?? []).map((position) => [position.instrumentId, position]))
   const periodTransactions = await transactions.getByPeriod(selected.id)
   const periodActions = await corporateActions.getByPeriod(selected.id)
@@ -218,15 +230,28 @@ export async function loadPortfolioDetail(options: {
       position,
       byId.get(position.instrumentId),
       valuationById.get(position.instrumentId) ?? null,
+      flowById.get(position.instrumentId) ?? null,
       openingById.get(position.instrumentId) ?? null,
       periodTransactions.filter((movement) => movement.instrumentId === position.instrumentId),
       periodActions.filter((action) => action.instrumentId === position.instrumentId),
       fieldSources.filter((source) => source.positionId === position.id),
     ),
   )
+  for (const flow of flows) {
+    if (rows.some((row) => row.id === flow.instrumentId)) continue
+    if (flow.quantity.actualClosingQuantity !== '0') continue
+    rows.push(
+      closedInstrument(
+        flow,
+        byId.get(flow.instrumentId),
+        periodTransactions.filter((movement) => movement.instrumentId === flow.instrumentId),
+        periodActions.filter((action) => action.instrumentId === flow.instrumentId),
+      ),
+    )
+  }
 
-  const categories = categoriesOf(rows, valuationById, byId, openingAggregate?.positions ?? [])
-  const explained = valuation.filter((result) => rows.some((row) => row.id === result.instrumentId))
+  const categories = categoriesOf(rows, byId, openingAggregate?.positions ?? [])
+  const explainedChanges = rows.map((row) => row.valuationChange).filter((value): value is string => value !== null)
 
   return {
     period: {
@@ -242,7 +267,7 @@ export async function loadPortfolioDetail(options: {
       investmentValue: sumMoney(rows.map((row) => row.currentValue).filter((value): value is string => value !== null)),
       portfolioValue: closing.totalValue,
       openingInvestmentValue: sumMoney((openingAggregate?.positions ?? []).map((position) => position.marketValue)),
-      valuationChange: explainedChange(explained),
+      valuationChange: sumMoney(explainedChanges),
     },
   }
 }
@@ -251,14 +276,22 @@ function instrumentOf(
   position: Position,
   instrument: Instrument | undefined,
   valuation: PositionValuationResult | null,
+  flow: PositionValueFlowAnalysis | null,
   opening: Position | null,
   movements: Transaction[],
   actions: CorporateAction[],
   sources: PositionFieldSource[],
 ): InstrumentDetail {
   const categoryId = instrument?.category ?? 'OTHER'
-  const change =
-    valuation && isIncludedInValuation(valuation.status) ? valuation.valuationChange : null
+  const legacyChange = valuation && isIncludedInValuation(valuation.status) ? valuation.valuationChange : null
+  const flowApplies =
+    flow?.periodPositionResult != null &&
+    (valuation == null ||
+      valuation.status === 'HAS_PERIOD_TRANSACTION' ||
+      valuation.status === 'MISSING_OPENING_POSITION' ||
+      valuation.status === 'MISSING_CLOSING_POSITION')
+  const change = legacyChange ?? (flowApplies ? flow.periodPositionResult : null)
+  const openingQuantity = flow?.quantity.openingQuantity ?? valuation?.openingQuantity ?? opening?.quantity ?? null
   return {
     id: position.instrumentId,
     ticker: instrument?.ticker ?? position.instrumentId,
@@ -266,20 +299,74 @@ function instrumentOf(
     categoryId,
     categoryLabel: CATEGORY_LABEL[categoryId],
     quantity: position.quantity,
-    openingQuantity: valuation?.openingQuantity ?? opening?.quantity ?? null,
-    openingQuantityDiffers: quantitiesDiffer(
-      valuation?.openingQuantity ?? opening?.quantity ?? null,
-      position.quantity,
-    ),
+    openingQuantity,
+    openingQuantityDiffers: quantitiesDiffer(openingQuantity, position.quantity),
     currentValue: position.marketValue,
-    openingValue: valuation?.openingValue ?? opening?.marketValue ?? null,
+    openingValue: flow?.openingValue ?? valuation?.openingValue ?? opening?.marketValue ?? null,
     valuationChange: change,
     valuationStatus: valuation?.status ?? null,
-    statusLabel: valuation ? STATUS_LABEL[valuation.status] : null,
+    statusLabel: flowLabel(flow, valuation, flowApplies),
+    boughtQuantity: flow?.quantity.boughtQuantity ?? null,
+    soldQuantity: flow?.quantity.soldQuantity ?? null,
+    subscribedQuantity: flow?.quantity.subscribedQuantity ?? null,
+    quantityStatusLabel: flow ? (flow.quantity.status === 'RECONCILED' ? 'Cantidad reconciliada' : 'La cantidad no cierra') : null,
+    acquisitionFlows: flow?.acquisitionFlows ?? null,
+    disposalFlows: flow?.disposalFlows ?? null,
+    flowNote: flow?.valueStatus === 'MISSING_TRANSACTION_FX' ? flow.reason : null,
     movements: movements.map(movementOf),
     corporateActions: actions.map(actionOf),
     provenance: provenanceLines(sources),
   }
+}
+
+function closedInstrument(
+  flow: PositionValueFlowAnalysis,
+  instrument: Instrument | undefined,
+  movements: Transaction[],
+  actions: CorporateAction[],
+): InstrumentDetail {
+  const categoryId = instrument?.category ?? 'OTHER'
+  return {
+    id: flow.instrumentId,
+    ticker: instrument?.ticker ?? flow.instrumentId,
+    name: instrument?.name ?? null,
+    categoryId,
+    categoryLabel: CATEGORY_LABEL[categoryId],
+    quantity: '0',
+    openingQuantity: flow.quantity.openingQuantity,
+    openingQuantityDiffers: true,
+    currentValue: '0.00',
+    openingValue: flow.openingValue,
+    valuationChange: flow.periodPositionResult,
+    valuationStatus: null,
+    statusLabel: flowLabel(flow, null, flow.periodPositionResult != null),
+    boughtQuantity: flow.quantity.boughtQuantity,
+    soldQuantity: flow.quantity.soldQuantity,
+    subscribedQuantity: flow.quantity.subscribedQuantity,
+    quantityStatusLabel: flow.quantity.status === 'RECONCILED' ? 'Cantidad reconciliada' : 'La cantidad no cierra',
+    acquisitionFlows: flow.acquisitionFlows,
+    disposalFlows: flow.disposalFlows,
+    flowNote: flow.valueStatus === 'MISSING_TRANSACTION_FX' ? flow.reason : null,
+    movements: movements.map(movementOf),
+    corporateActions: actions.map(actionOf),
+    provenance: [],
+  }
+}
+
+function flowLabel(
+  flow: PositionValueFlowAnalysis | null,
+  valuation: PositionValuationResult | null,
+  usingFlowResult: boolean,
+): string | null {
+  if (flow?.valueStatus === 'MISSING_TRANSACTION_FX') return 'Pendiente: falta tipo de cambio de la operación.'
+  if (flow?.valueStatus === 'QUANTITY_MISMATCH') return 'La cantidad no cierra'
+  if (flow?.valueStatus === 'QUANTITY_RECONCILED_VALUE_PENDING') return 'Cantidad reconciliada. Valor pendiente.'
+  if (valuation && isIncludedInValuation(valuation.status)) return STATUS_LABEL[valuation.status]
+  if (usingFlowResult && flow?.valueStatus === 'CLOSED_DURING_PERIOD') return 'Cerrada en el período'
+  if (usingFlowResult && flow?.valueStatus === 'OPENED_DURING_PERIOD') return 'Abierta en el período'
+  if (usingFlowResult && flow?.valueStatus === 'CORPORATE_ACTION_EXPLAINED') return 'Explicado · acción corporativa'
+  if (usingFlowResult) return 'Explicado'
+  return valuation ? STATUS_LABEL[valuation.status] : null
 }
 
 function movementOf(movement: Transaction): DetailMovement {
@@ -319,7 +406,6 @@ function provenanceLines(sources: readonly PositionFieldSource[]): string[] {
 
 function categoriesOf(
   rows: readonly InstrumentDetail[],
-  valuationById: Map<string, PositionValuationResult>,
   byId: Map<string, Instrument>,
   openingPositions: readonly Position[],
 ): CategoryDetail[] {
@@ -327,29 +413,20 @@ function categoriesOf(
   return ids
     .map((id) => {
       const members = rows.filter((row) => row.categoryId === id)
-      const memberIds = new Set(members.map((row) => row.id))
-      const valuation = [...valuationById.values()].filter((result) => memberIds.has(result.instrumentId))
       const openingValues = openingPositions
         .filter((position) => (byId.get(position.instrumentId)?.category ?? 'OTHER') === id)
         .map((position) => position.marketValue)
+      const changes = members.map((row) => row.valuationChange).filter((value): value is string => value !== null)
       return {
         id,
         label: CATEGORY_LABEL[id],
         closingValue: sumMoney(members.map((row) => row.currentValue).filter((value): value is string => value !== null)) ?? '0.00',
         openingValue: sumMoney(openingValues),
-        valuationChange: explainedChange(valuation),
+        valuationChange: changes.length === 0 ? null : sumMoney(changes),
         positionCount: members.length,
       }
     })
     .sort((left, right) => parseDecimal(right.closingValue).cmp(parseDecimal(left.closingValue)))
-}
-
-function explainedChange(results: readonly PositionValuationResult[]): string | null {
-  const included = results.filter(
-    (result) => isIncludedInValuation(result.status) && result.valuationChange !== null,
-  )
-  if (included.length === 0) return null
-  return calculateTotalValuationChange(included)
 }
 
 function quantitiesDiffer(opening: string | null, closing: string | null): boolean {

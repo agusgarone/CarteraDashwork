@@ -1,3 +1,4 @@
+import { PARTIAL_ATTRIBUTION_NOTE } from './overviewCopy'
 import type { ImportPeriodResultView } from './importPeriodApplication'
 import type { ReconciliationStatus } from '../domain/reconciliation'
 
@@ -62,17 +63,42 @@ export function importDialogReducer(state: ImportDialogState, action: ImportDial
   }
 }
 
+const UNSUPPORTED_LEAD =
+  'Los datos se importaron correctamente. Este período contiene operaciones que todavía no pueden reconciliarse automáticamente.'
+
+const CASH_LEDGER_LEAD =
+  'Caja reconciliada. La atribución de operaciones del período todavía está pendiente.'
+
 export function importOutcomeCopy(result: ImportPeriodResultView): { lead: string; note: string | null } {
+  if (result.positionAttributionPartial) {
+    if (result.outcome === 'existing') return { lead: 'Este período ya estaba importado.', note: PARTIAL_ATTRIBUTION_NOTE }
+    return { lead: PARTIAL_ATTRIBUTION_NOTE, note: null }
+  }
+  if (result.cashLedgerReconciled) {
+    if (result.outcome === 'existing') return { lead: 'Este período ya estaba importado.', note: CASH_LEDGER_LEAD }
+    return { lead: CASH_LEDGER_LEAD, note: null }
+  }
+  if (result.unsupportedInternalMovements) {
+    if (result.outcome === 'existing') return { lead: 'Este período ya estaba importado.', note: UNSUPPORTED_LEAD }
+    return { lead: UNSUPPORTED_LEAD, note: null }
+  }
   if (!result.analysis) {
     return {
       lead: result.outcome === 'existing' ? 'Este período ya estaba importado.' : 'Datos importados. Análisis pendiente.',
       note: result.outcome === 'existing' ? 'Datos importados. Análisis pendiente.' : null,
     }
   }
-  if (result.outcome === 'existing') {
-    return { lead: 'Este período ya estaba importado.', note: statusNote(result.analysis.reconciliationStatus) }
+  const status = result.analysis.reconciliationStatus
+  if (status === null) {
+    return {
+      lead: result.outcome === 'existing' ? 'Este período ya estaba importado.' : 'Datos importados. Análisis pendiente.',
+      note: result.outcome === 'existing' ? 'Datos importados. Análisis pendiente.' : null,
+    }
   }
-  return { lead: completedLead(result.analysis.reconciliationStatus), note: null }
+  if (result.outcome === 'existing') {
+    return { lead: 'Este período ya estaba importado.', note: statusNote(status) }
+  }
+  return { lead: completedLead(status), note: null }
 }
 
 function completedLead(status: ReconciliationStatus): string {

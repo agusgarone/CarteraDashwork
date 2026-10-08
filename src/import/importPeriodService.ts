@@ -6,6 +6,7 @@ import type { PeriodPerformanceAnalysis } from '../engine/models/periodPerforman
 import { createPerformanceAnalysisService } from '../engine/services/performanceAnalysisService'
 import { createPeriodAnalysisService } from '../engine/services/periodAnalysisService'
 import type { ParsedConsolidatedPosition } from '../parsers/models/parsedConsolidatedPosition'
+import { createCashMovementLegRepository } from '../repositories/cashMovementLegRepository'
 import { createCorporateActionRepository } from '../repositories/corporateActionRepository'
 import { createDocumentRepository } from '../repositories/documentRepository'
 import { createInstrumentRepository } from '../repositories/instrumentRepository'
@@ -16,6 +17,7 @@ import { createSnapshotRepository } from '../repositories/snapshotRepository'
 import { createTransactionRepository } from '../repositories/transactionRepository'
 import { adaptConsolidatedPosition } from './adapters/consolidatedPositionAdapter'
 import { adaptMonthlyAccount } from './adapters/monthlyAccountAdapter'
+import { cashMovementLegsFromAccount } from './cashMovementLegs'
 import type { ImportFileSystem } from './documentStore'
 import { fundMatchKeyFromConsolidatedName } from './fundIdentity'
 import { ImportConflictError, ImportPeriodValidationError } from './importPeriodErrors'
@@ -107,6 +109,10 @@ export function createImportPeriodService(options: ImportPeriodServiceOptions): 
 
         const alreadyImported = await existingImport(prepared, input.portfolioId, reusedOpeningId)
         if (alreadyImported) {
+          await createCashMovementLegRepository(db).saveIfMissing(
+            alreadyImported.periodId,
+            cashMovementLegsFromAccount(prepared.account.parsed),
+          )
           const analysis = await readAnalysis(alreadyImported.periodId)
           return { outcome: 'existing', ...alreadyImported, analysis }
         }
@@ -216,6 +222,10 @@ export function createImportPeriodService(options: ImportPeriodServiceOptions): 
   }
 
   async function ensureReconciliation(periodId: EntityId, analysis: PeriodPerformanceAnalysis): Promise<void> {
+    if (analysis.performance.attributionStatus === 'PENDING') return
+    const explainedResult = analysis.performance.explainedResult
+    const difference = analysis.performance.unexplainedDifference
+    if (explainedResult === null || difference === null) return
     const latest = await reconciliations.getLatestByPeriod(periodId)
     if (latest) return
     await reconciliations.create({
@@ -225,8 +235,8 @@ export function createImportPeriodService(options: ImportPeriodServiceOptions): 
       contributions: analysis.base.contributions,
       withdrawals: analysis.base.withdrawals,
       expectedResult: analysis.performance.expectedResult,
-      explainedResult: analysis.performance.explainedResult,
-      difference: analysis.performance.unexplainedDifference,
+      explainedResult,
+      difference,
       status: reconciliationStatus(analysis),
       engineVersion: ENGINE_VERSION,
     })
@@ -355,6 +365,18 @@ export function createImportPeriodService(options: ImportPeriodServiceOptions): 
       corporateActions: movements.corporateActions.map((action, index) =>
         actionRow(action, prepared.account.parsed.corporateActions[index]?.ticker ?? '', instrumentRows),
       ),
+      cashLegs: cashMovementLegsFromAccount(prepared.account.parsed).map((leg) => ({
+        operationReference: leg.operationId,
+        operationType: leg.operationType,
+        currency: leg.currency,
+        amount: leg.amount,
+        date: leg.date,
+        role: leg.role,
+        commission: leg.commission ?? null,
+        vat: leg.vat ?? null,
+        marketFees: leg.marketFees ?? null,
+        taxComponent: leg.taxComponent ?? null,
+      })),
     }
   }
 }
@@ -364,12 +386,14 @@ async function analyzeFromDatabase(db: DatabaseClient, periodId: EntityId): Prom
   const snapshots = createSnapshotRepository(db)
   const transactions = createTransactionRepository(db)
   const corporateActions = createCorporateActionRepository(db)
+  const cashLegs = createCashMovementLegRepository(db)
   const service = createPerformanceAnalysisService({
     analysis: createPeriodAnalysisService({ periods, snapshots, transactions }),
     periods,
     snapshots,
     transactions,
     corporateActions,
+    cashLegs,
   })
   return service.analyzePeriod(periodId)
 }

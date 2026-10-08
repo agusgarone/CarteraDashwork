@@ -80,7 +80,10 @@ export interface CashCurrencyAttribution {
   attributionStatus: CashValueAttributionStatus
 }
 
-export type CashReconciliationStatus = 'EXPLAINED' | 'HAS_INTERNAL_CASH_MOVEMENTS'
+export type CashReconciliationStatus =
+  | 'EXPLAINED'
+  | 'HAS_INTERNAL_CASH_MOVEMENTS'
+  | 'CASH_LEDGER_RECONCILED'
 
 export interface CashReconciliationResult {
   balances: CashValuationResult[]

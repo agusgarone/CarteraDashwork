@@ -3,10 +3,12 @@ import type { CorporateAction } from '../../domain/corporateAction'
 import type { PortfolioPeriod } from '../../domain/period'
 import type { PortfolioSnapshot, PortfolioSnapshotAggregate } from '../../domain/snapshot'
 import type { Transaction } from '../../domain/transaction'
+import { cashMovementLegRepository } from '../../repositories/cashMovementLegRepository'
 import { corporateActionRepository } from '../../repositories/corporateActionRepository'
 import { periodRepository } from '../../repositories/periodRepository'
 import { snapshotRepository } from '../../repositories/snapshotRepository'
 import { transactionRepository } from '../../repositories/transactionRepository'
+import type { CashMovementLeg } from '../calculations/cashLedger'
 import { calculateModifiedDietz } from '../calculations/modifiedDietz'
 import { reconcileExplicitPerformance } from '../calculations/explicitPerformance'
 import {
@@ -37,6 +39,9 @@ export interface PerformanceAnalysisDependencies {
   }
   corporateActions: {
     getByPeriod(periodId: EntityId): Promise<CorporateAction[]>
+  }
+  cashLegs?: {
+    getByPeriod(periodId: EntityId): Promise<CashMovementLeg[]>
   }
 }
 
@@ -77,6 +82,9 @@ export function createPerformanceAnalysisService(
       }
 
       const corporateActions = await dependencies.corporateActions.getByPeriod(periodId)
+      const cashLegs = dependencies.cashLegs
+        ? await dependencies.cashLegs.getByPeriod(periodId)
+        : undefined
       const periodReturn = calculateModifiedDietz({
         investmentResult: base.investmentResult,
         openingValue: base.openingValue,
@@ -99,6 +107,7 @@ export function createPerformanceAnalysisService(
           closingCashBalances: closingAggregate.cashBalances,
           baseCurrency: closing.currency,
           netContributions: base.netContributions,
+          cashLegs,
         }),
       }
     },
@@ -111,5 +120,6 @@ export const performanceAnalysisService = createPerformanceAnalysisService({
   snapshots: snapshotRepository,
   transactions: transactionRepository,
   corporateActions: corporateActionRepository,
+  cashLegs: cashMovementLegRepository,
 })
 

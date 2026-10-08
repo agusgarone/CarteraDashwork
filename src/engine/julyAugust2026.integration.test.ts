@@ -115,7 +115,7 @@ describe('fixture real julio → agosto 2026', () => {
     expect(exact(analysis.performance.cash.attribution?.otherCashResult)).toBe('5346.5904')
     expect(exact(analysis.performance.cash.attribution?.totalEconomicResult)).toBe('8424.2160')
     expect(
-      new Decimal(analysis.performance.explainedResult).eq(
+      new Decimal(analysis.performance.explainedResult ?? '0').eq(
         new Decimal(analysis.performance.breakdown.valuationChange).plus(
           analysis.performance.breakdown.cashEconomicResult ?? '0',
         ),
@@ -171,7 +171,7 @@ describe('fixture real julio → agosto 2026', () => {
       analysis.performance.breakdown.cashEconomicResult ?? '0',
     )
 
-    expect(explained.eq(analysis.performance.explainedResult)).toBe(true)
+    expect(explained.eq(analysis.performance.explainedResult ?? '0')).toBe(true)
     expect(explained.plus(analysis.performance.cash.fxValuationChange).eq(explained)).toBe(false)
     expect(explained.eq(analysis.performance.cash.totalCashValueChange)).toBe(false)
   })

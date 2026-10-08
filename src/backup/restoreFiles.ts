@@ -71,7 +71,7 @@ export function assertBackupDatabase(filePath: string): void {
     const versions = sqlite.prepare('SELECT version FROM schema_migrations ORDER BY version').all() as {
       version: string
     }[]
-    if (versions.map((row) => row.version).join(',') !== '001,002') {
+    if (versions.map((row) => row.version).join(',') !== '001,002,003,004') {
       throw new BackupError('La base del backup no tiene el schema de esta versión.')
     }
   } finally {

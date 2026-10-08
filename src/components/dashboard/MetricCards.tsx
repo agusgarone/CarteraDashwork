@@ -15,7 +15,12 @@ export function MetricCards({ overview }: { overview: PortfolioOverviewView }) {
     metrics.investmentResult !== null &&
     metrics.investmentResult.trim().startsWith('-') &&
     /[1-9]/.test(metrics.investmentResult)
-  const note = reconciliationNote(metrics.reconciliationStatus, metrics.unexplainedDifference)
+  const note = reconciliationNote(
+    metrics.reconciliationStatus,
+    metrics.unexplainedDifference,
+    metrics.performanceAttribution,
+    metrics.positionAttribution,
+  )
 
   return (
     <section className="grid gap-4 lg:grid-cols-3">

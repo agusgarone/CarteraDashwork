@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { SignedDecimal } from '@/components/shared/SignedDecimal'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { CASH_LEDGER_RECONCILED_NOTE, PARTIAL_ATTRIBUTION_NOTE } from '@/application/overviewCopy'
 import type { PortfolioOverviewView } from '@/application/portfolioOverview'
 
 export function PerformanceOrigin({ overview }: { overview: PortfolioOverviewView }) {
@@ -66,6 +67,11 @@ export function PerformanceOrigin({ overview }: { overview: PortfolioOverviewVie
             </CardContent>
           </Card>
         </div>
+      ) : overview.metrics.positionAttribution === 'PARTIAL' ? (
+        <p className="text-sm text-muted-foreground">{PARTIAL_ATTRIBUTION_NOTE}</p>
+      ) : overview.metrics.performanceAttribution === 'PENDING' &&
+        overview.metrics.reconciliationStatus === null ? (
+        <p className="text-sm text-muted-foreground">{CASH_LEDGER_RECONCILED_NOTE}</p>
       ) : (
         <p className="text-sm text-muted-foreground">Datos importados. Análisis pendiente.</p>
       )}

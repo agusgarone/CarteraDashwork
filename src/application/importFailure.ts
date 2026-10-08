@@ -1,4 +1,4 @@
-import { ImportConflictError, ImportPeriodValidationError } from '../import/importPeriodErrors'
+import { ImportConflictError, ImportPeriodParsingError, ImportPeriodValidationError } from '../import/importPeriodErrors'
 
 export interface ImportFailureView {
   headline: string
@@ -12,6 +12,12 @@ export function describeImportFailure(error: unknown): ImportFailureView {
       return { headline: `Ya existe una posición diferente para el ${formatDay(date)}.`, detail: null }
     }
     return { headline: error.message, detail: null }
+  }
+  if (error instanceof ImportPeriodParsingError) {
+    return {
+      headline: 'No pudimos interpretar algunos movimientos del resumen mensual.',
+      detail: error.message,
+    }
   }
   if (error instanceof ImportPeriodValidationError) {
     if (/no corresponde|no cierran/i.test(error.message)) {

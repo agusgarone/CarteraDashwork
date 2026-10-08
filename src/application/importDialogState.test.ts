@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ImportConflictError, ImportPeriodValidationError } from '../import/importPeriodErrors'
+import { ImportConflictError, ImportPeriodParsingError, ImportPeriodValidationError } from '../import/importPeriodErrors'
 import { describeImportFailure } from './importFailure'
 import { importDialogReducer, importOutcomeCopy, initialImportDialogState } from './importDialogState'
 import type { ImportPeriodResultView } from './importPeriodApplication'
@@ -50,6 +50,12 @@ describe('import dialog', () => {
 
     const conflict = describeImportFailure(new ImportConflictError('Ya hay otro documento para el snapshot 2026-08-31.'))
     expect(conflict.headline).toBe('Ya existe una posición diferente para el 31/08/2026.')
+
+    const parsing = describeImportFailure(new ImportPeriodParsingError(21))
+    expect(parsing).toEqual({
+      headline: 'No pudimos interpretar algunos movimientos del resumen mensual.',
+      detail: '21 movimientos no pudieron leerse correctamente.',
+    })
   })
 
   it('trata WARNING como importación completada y un análisis ausente como pendiente', () => {
@@ -60,6 +66,15 @@ describe('import dialog', () => {
     expect(importOutcomeCopy(view('created', 'FAILED')).lead).toBe(
       'Los datos quedaron importados. El análisis no se pudo reconciliar.',
     )
+    expect(importOutcomeCopy({ ...view('created', 'FAILED'), unsupportedInternalMovements: true }).lead).toBe(
+      'Los datos se importaron correctamente. Este período contiene operaciones que todavía no pueden reconciliarse automáticamente.',
+    )
+    expect(importOutcomeCopy({ ...view('created', 'FAILED'), cashLedgerReconciled: true }).lead).toBe(
+      'Caja reconciliada. La atribución de operaciones del período todavía está pendiente.',
+    )
+    expect(importOutcomeCopy({ ...view('created', 'FAILED'), positionAttributionPartial: true }).lead).toBe(
+      'Atribución parcial del resultado',
+    )
     expect(importOutcomeCopy(view('existing', 'WARNING')).lead).toBe('Este período ya estaba importado.')
     expect(importOutcomeCopy({ ...view('created', 'WARNING'), analysis: null }).lead).toBe(
       'Datos importados. Análisis pendiente.',
@@ -67,17 +82,25 @@ describe('import dialog', () => {
   })
 })
 
-function view(outcome: 'created' | 'existing', status: 'WARNING' | 'RECONCILED' | 'FAILED'): ImportPeriodResultView {
+function view(
+  outcome: 'created' | 'existing',
+  status: 'WARNING' | 'RECONCILED' | 'FAILED',
+): ImportPeriodResultView {
   return {
     outcome,
     period: { id: '1', year: 2026, month: 8, status: 'COMPLETE' },
     documents: [],
     summary: { positionsCount: 25, transactionsCount: 10, corporateActionsCount: 1 },
+    unsupportedInternalMovements: false,
+    cashLedgerReconciled: false,
+    positionAttributionPartial: false,
+    periodReturnLabel: null,
     analysis: {
       expectedResult: '179959.00',
       explainedResult: '179958.136',
       unexplainedDifference: '0.864',
       reconciliationStatus: status,
+      unsupportedInternalMovements: false,
     },
   }
 }

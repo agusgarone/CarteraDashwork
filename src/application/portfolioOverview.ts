@@ -12,6 +12,7 @@ import { createPerformanceAnalysisService } from '../engine/services/performance
 import { createPeriodAnalysisService, periodStartDate } from '../engine/services/periodAnalysisService'
 import { ENGINE_VERSION } from '../engine/version'
 import { reconciliationStatus } from '../import/reconciliationPolicy'
+import { createCashMovementLegRepository } from '../repositories/cashMovementLegRepository'
 import { createCorporateActionRepository } from '../repositories/corporateActionRepository'
 import { createDocumentRepository } from '../repositories/documentRepository'
 import { createInstrumentRepository } from '../repositories/instrumentRepository'
@@ -21,6 +22,8 @@ import { createReconciliationRepository } from '../repositories/reconciliationRe
 import { createSnapshotRepository } from '../repositories/snapshotRepository'
 import { createTransactionRepository } from '../repositories/transactionRepository'
 import { resolveOverviewPeriod } from './overviewPeriod'
+
+const INTERNAL_MOVEMENT_TYPES = new Set(['BUY', 'SELL', 'FUND_SUBSCRIPTION', 'FUND_REDEMPTION', 'FX_CONVERSION'])
 
 const MONTHS = [
   'Enero',
@@ -105,6 +108,8 @@ export interface PortfolioOverviewView {
     explainedResult: string | null
     unexplainedDifference: string | null
     reconciliationStatus: ReconciliationStatus | null
+    performanceAttribution: 'AVAILABLE' | 'PENDING' | null
+    positionAttribution: 'PARTIAL' | null
   }
   /**
    * Ratio Modified Dietz del período seleccionado. No está anualizado
@@ -138,6 +143,8 @@ export interface PortfolioOverviewView {
     documents: OverviewImportDocument[]
     reconciliationStatus: ReconciliationStatus | null
     unexplainedDifference: string | null
+    performanceAttribution: 'AVAILABLE' | 'PENDING' | null
+    positionAttribution: 'PARTIAL' | null
   }
   /** Reservado si el run quedó calculado con otro motor. La Home no lo muestra. */
   analysisNeedsRefresh: boolean
@@ -161,6 +168,7 @@ export function periodLabel(year: number, month: number): string {
 export async function loadPortfolioOverview(options: {
   db: DatabaseClient
   periodId?: string | null
+  preparePeriod?: (periodId: string) => Promise<void>
 }): Promise<PortfolioOverviewView | null> {
   const db = options.db
   const portfolios = createPortfolioRepository(db)
@@ -171,12 +179,20 @@ export async function loadPortfolioOverview(options: {
   const reconciliations = createReconciliationRepository(db)
   const transactions = createTransactionRepository(db)
   const corporateActions = createCorporateActionRepository(db)
+  const cashLegs = createCashMovementLegRepository(db)
   const portfolio = (await portfolios.getAll())[0]
   if (!portfolio) return null
 
   const listed = await periods.getByPortfolio(portfolio.id)
   const selected = resolveOverviewPeriod(listed, options.periodId ?? null)
   if (!selected) return null
+  if (options.preparePeriod) {
+    try {
+      await options.preparePeriod(selected.id)
+    } catch (error) {
+      console.error(error)
+    }
+  }
 
   const closing = await snapshots.getLatestByPeriod(selected.id)
   if (!closing) {
@@ -190,6 +206,7 @@ export async function loadPortfolioOverview(options: {
     snapshots,
     transactions,
     corporateActions,
+    cashLegs,
   })
 
   let openingValue = run?.openingValue ?? null
@@ -201,6 +218,8 @@ export async function loadPortfolioOverview(options: {
   let status = run?.status ?? null
   let resultBreakdown: PortfolioOverviewView['resultBreakdown'] = null
   let periodReturn: PortfolioOverviewView['periodReturn'] = null
+  let performanceAttribution: PortfolioOverviewView['metrics']['performanceAttribution'] = null
+  let positionAttribution: PortfolioOverviewView['metrics']['positionAttribution'] = null
 
   try {
     const analysis = await performance.analyzePeriod(selected.id)
@@ -210,17 +229,43 @@ export async function loadPortfolioOverview(options: {
       status: analysis.periodReturn.status,
       decimal: analysis.periodReturn.returnDecimal,
     }
+    performanceAttribution = analysis.performance.attributionStatus
+    positionAttribution =
+      analysis.performance.attributionStatus === 'PENDING' && analysis.performance.partialExplainedResult !== null
+        ? 'PARTIAL'
+        : null
     if (!run) {
       openingValue = analysis.base.openingValue
       contributions = analysis.base.contributions
       withdrawals = analysis.base.withdrawals
       investmentResult = analysis.base.investmentResult
-      explainedResult = analysis.performance.explainedResult
-      unexplainedDifference = analysis.performance.unexplainedDifference
-      status = reconciliationStatus(analysis)
+      if (analysis.performance.attributionStatus === 'PENDING') {
+        explainedResult = null
+        unexplainedDifference = null
+        status = analysis.performance.cash.status === 'CASH_LEDGER_RECONCILED' ? null : 'FAILED'
+      } else {
+        explainedResult = analysis.performance.explainedResult
+        unexplainedDifference = analysis.performance.unexplainedDifference
+        status = reconciliationStatus(analysis)
+      }
     }
   } catch (error) {
     console.error(error)
+    if (!run) {
+      try {
+        const base = await createPeriodAnalysisService({ periods, snapshots, transactions }).analyzePeriod(selected.id)
+        openingValue = base.openingValue
+        contributions = base.contributions
+        withdrawals = base.withdrawals
+        investmentResult = base.investmentResult
+      } catch (baseError) {
+        console.error(baseError)
+      }
+    }
+    const movementTypes = (await transactions.getByPeriod(selected.id)).map((movement) => movement.type)
+    if (status === null && movementTypes.some((type) => INTERNAL_MOVEMENT_TYPES.has(type))) {
+      status = 'FAILED'
+    }
   }
 
   const netContributions =
@@ -272,6 +317,8 @@ export async function loadPortfolioOverview(options: {
       explainedResult,
       unexplainedDifference,
       reconciliationStatus: status,
+      performanceAttribution,
+      positionAttribution,
     },
     periodReturn,
     historicalContributedCapital: null,
@@ -285,6 +332,8 @@ export async function loadPortfolioOverview(options: {
       documents: await importDocumentsOf(selected, snapshots, documents),
       reconciliationStatus: status,
       unexplainedDifference,
+      performanceAttribution,
+      positionAttribution,
     },
     analysisNeedsRefresh: run !== null && run.engineVersion !== ENGINE_VERSION,
   }

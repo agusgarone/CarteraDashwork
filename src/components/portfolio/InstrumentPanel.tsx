@@ -50,11 +50,30 @@ export function InstrumentPanel({
         <Fact label="Variación de valuación">
           {instrument.valuationChange ? <SignedDecimal value={instrument.valuationChange} /> : '—'}
         </Fact>
-        {instrument.openingQuantityDiffers && instrument.openingQuantity ? (
+        {instrument.boughtQuantity !== null ? (
+          <>
+            <Fact label="Cantidad de apertura">{formatQuantity(instrument.openingQuantity ?? '0')}</Fact>
+            <Fact label="Compras">{formatQuantity(instrument.boughtQuantity ?? '0')}</Fact>
+            <Fact label="Ventas">{formatQuantity(instrument.soldQuantity ?? '0')}</Fact>
+            <Fact label="Suscripciones">{formatQuantity(instrument.subscribedQuantity ?? '0')}</Fact>
+            <Fact label="Conciliación">{instrument.quantityStatusLabel ?? '—'}</Fact>
+            {instrument.flowNote ? null : (
+              <>
+                <Fact label="Compras y suscripciones">
+                  {instrument.acquisitionFlows ? formatCurrencyARS(instrument.acquisitionFlows) : '—'}
+                </Fact>
+                <Fact label="Ventas y rescates">
+                  {instrument.disposalFlows ? formatCurrencyARS(instrument.disposalFlows) : '—'}
+                </Fact>
+              </>
+            )}
+          </>
+        ) : instrument.openingQuantityDiffers && instrument.openingQuantity ? (
           <Fact label="Cantidad al inicio">{formatQuantity(instrument.openingQuantity)}</Fact>
         ) : null}
         <Fact label="Estado">{instrument.statusLabel ?? '—'}</Fact>
       </div>
+      {instrument.flowNote ? <p className="mt-3 text-sm text-muted-foreground">{instrument.flowNote}</p> : null}
 
       {instrument.provenance.length > 0 ? (
         <ul className="mt-5 space-y-1 text-sm text-muted-foreground">

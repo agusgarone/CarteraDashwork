@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { EntityId } from '../domain/common'
 import type { Transaction, TransactionType } from '../domain/transaction'
 import { calculateModifiedDietz } from './calculations/modifiedDietz'
+import { formatReturnPercent } from '../utils/formatPercentage'
 import { daysBetween } from './calendarDate'
 import { AnalysisError } from './errors/analysisErrors'
 
@@ -74,6 +75,26 @@ describe('calculateModifiedDietz', () => {
     expect(result.externalFlows).toEqual([])
     expect(new Decimal(result.weightedCapital).eq('1000')).toBe(true)
     expect(new Decimal(result.returnDecimal).eq('0.05')).toBe(true)
+  })
+
+  it('pondera el aporte de julio 2026 sin anualizar', () => {
+    const result = calculateModifiedDietz({
+      investmentResult: '1146668.00',
+      openingValue: '23007361',
+      openingDate: '2026-06-30',
+      closingDate: '2026-07-31',
+      transactions: [movement('aporte', 'CONTRIBUTION', '1800000.00', '2026-07-02')],
+    })
+
+    expect(daysBetween('2026-06-30', '2026-07-31')).toBe(31)
+    expect(daysBetween('2026-07-02', '2026-07-31')).toBe(29)
+    expect(result.status).toBe('CALCULATED')
+    if (result.status !== 'CALCULATED') return
+    const weighted = new Exact('23007361').plus(new Exact('1800000').times(29).div(31))
+    expect(result.weightedCapital).toBe(weighted.toFixed(28))
+    expect(result.returnDecimal).toBe(new Exact('1146668').div(weighted).toFixed(28))
+    expect(result.returnDecimal.startsWith('0.046440291')).toBe(true)
+    expect(formatReturnPercent(result.returnDecimal)).toBe('+4,64%')
   })
 
   it('pondera un único aporte', () => {

@@ -9,7 +9,8 @@ import type { PeriodPerformanceAnalysis } from '../engine/models/periodPerforman
  * RECONCILED solo cuando ese resto es cero.
  */
 export function reconciliationStatus(analysis: PeriodPerformanceAnalysis): ReconciliationStatus {
-  if (analysis.performance.cash.status !== 'EXPLAINED') return 'FAILED'
-  if (!new Decimal(analysis.performance.unexplainedDifference).isZero()) return 'WARNING'
+  const difference = analysis.performance.unexplainedDifference
+  if (analysis.performance.cash.status !== 'EXPLAINED' || difference === null) return 'FAILED'
+  if (!new Decimal(difference).isZero()) return 'WARNING'
   return 'RECONCILED'
 }

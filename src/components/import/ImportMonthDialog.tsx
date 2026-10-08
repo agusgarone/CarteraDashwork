@@ -225,18 +225,28 @@ function ImportResult({ result }: { result: ImportPeriodResultView }) {
             <dt className="text-muted-foreground">Resultado de inversiones</dt>
             <dd>{formatCurrencyARS(result.analysis.expectedResult)}</dd>
           </div>
-          <div className="flex justify-between gap-4">
-            <dt className="text-muted-foreground">Explicado</dt>
-            <dd>{formatCurrencyARS(result.analysis.explainedResult)}</dd>
-          </div>
-          <div className="flex justify-between gap-4">
-            <dt className="text-muted-foreground">Diferencia</dt>
-            <dd>{formatCurrencyARS(result.analysis.unexplainedDifference)}</dd>
-          </div>
-          <div className="flex justify-between gap-4">
-            <dt className="text-muted-foreground">Estado</dt>
-            <dd>{result.analysis.reconciliationStatus}</dd>
-          </div>
+          {result.periodReturnLabel ? (
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted-foreground">Rendimiento del período</dt>
+              <dd>{result.periodReturnLabel}</dd>
+            </div>
+          ) : null}
+          {result.analysis.explainedResult !== null && result.analysis.unexplainedDifference !== null ? (
+            <>
+              <div className="flex justify-between gap-4">
+                <dt className="text-muted-foreground">Explicado</dt>
+                <dd>{formatCurrencyARS(result.analysis.explainedResult)}</dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-muted-foreground">Diferencia</dt>
+                <dd>{formatCurrencyARS(result.analysis.unexplainedDifference)}</dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-muted-foreground">Estado</dt>
+                <dd>{result.analysis.reconciliationStatus}</dd>
+              </div>
+            </>
+          ) : null}
         </dl>
       ) : null}
     </div>

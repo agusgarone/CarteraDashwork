@@ -192,6 +192,11 @@ describe('reconcileExplicitPerformance', () => {
       },
       explainedResult: '0.00',
       unexplainedDifference: '179959.00',
+      attributionStatus: 'AVAILABLE',
+      cashLedger: null,
+      positionFlows: result.positionFlows,
+      partialExplainedResult: null,
+      pendingAttribution: null,
     })
     expect(result).not.toHaveProperty('marketChange')
   })

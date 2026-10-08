@@ -12,7 +12,9 @@ import { extractPdfDocument, type PdfTextDocument } from '../parsers/text/extrac
 import { detectBalanzDocument, type ImportableDocumentType } from './detectDocument'
 import { documentRelativePath, originalExtension, type ImportFileSystem } from './documentStore'
 import { enrichFundPositions, type FundEnrichmentResult } from './enrichment/enrichFundPositions'
+import { enrichFundSubscriptions } from './enrichment/enrichFundSubscriptions'
 import { ImportPeriodValidationError } from './importPeriodErrors'
+import { assertMonthlyAccountReadable } from './monthlyAccountGuard'
 
 export interface ImportFile {
   originalPath: string
@@ -119,6 +121,7 @@ function classify(inputs: ParsedInput[]): PreparedImport {
   }
 
   const account = parseAccount(accountInput)
+  assertMonthlyAccountReadable(account)
   const fund = parseFund(fundInput)
   const consolidated = positions.map((input) => ({ input, position: parsePosition(input) }))
   const closing = consolidated.find((item) => item.position.snapshotDate === account.period.endDate)
@@ -162,7 +165,14 @@ function classify(inputs: ParsedInput[]): PreparedImport {
         holdingCurrency: 'ARS',
       }),
     },
-    account: { file: accountFile, parsed: account },
+    account: {
+      file: accountFile,
+      parsed: enrichFundSubscriptions({
+        account,
+        fundStatement: fund,
+        positions: closing.position.positions,
+      }),
+    },
     fund: { file: fundFile, parsed: fund },
     openingPeriod: opening ? yearMonth(opening.position.snapshotDate) : null,
     closingPeriod: yearMonth(account.period.endDate),
