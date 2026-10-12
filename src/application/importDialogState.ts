@@ -1,5 +1,6 @@
 import { PARTIAL_ATTRIBUTION_NOTE } from './overviewCopy'
 import type { ImportPeriodResultView } from './importPeriodApplication'
+import type { DocumentType } from '../domain/document'
 import type { ReconciliationStatus } from '../domain/reconciliation'
 
 export interface SelectedImportFile {
@@ -113,6 +114,25 @@ function statusNote(status: ReconciliationStatus): string | null {
   if (status === 'WARNING') return 'Queda una pequeña diferencia pendiente de reconciliación.'
   if (status === 'FAILED') return 'El análisis no se pudo reconciliar.'
   return null
+}
+
+export interface ImportDocumentChecklistItem {
+  label: string
+  present: boolean
+  optional: boolean
+}
+
+/** El Excel de resultados se muestra siempre y nunca como un requisito faltante. */
+export function importDocumentChecklist(types: readonly DocumentType[]): ImportDocumentChecklistItem[] {
+  const count = (type: DocumentType) => types.filter((item) => item === type).length
+  const positions = count('CONSOLIDATED_POSITION')
+  return [
+    { label: 'Posición apertura', present: positions >= 2, optional: false },
+    { label: 'Posición cierre', present: positions >= 1, optional: false },
+    { label: 'Resumen mensual', present: count('MONTHLY_ACCOUNT') > 0, optional: false },
+    { label: 'Resumen FCI', present: count('MONTHLY_FUND_STATEMENT') > 0, optional: false },
+    { label: 'Resultados del período', present: count('PERIOD_RESULTS') > 0, optional: true },
+  ]
 }
 
 function uniqueFiles(files: SelectedImportFile[]): { files: SelectedImportFile[]; droppedDuplicate: boolean } {

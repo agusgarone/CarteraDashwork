@@ -9,6 +9,10 @@ import { periodRepository } from '../../repositories/periodRepository'
 import { snapshotRepository } from '../../repositories/snapshotRepository'
 import { transactionRepository } from '../../repositories/transactionRepository'
 import type { CashMovementLeg } from '../calculations/cashLedger'
+import {
+  transactionFxRepository,
+  type StoredTransactionFx,
+} from '../../repositories/transactionFxRepository'
 import { calculateModifiedDietz } from '../calculations/modifiedDietz'
 import { reconcileExplicitPerformance } from '../calculations/explicitPerformance'
 import {
@@ -42,6 +46,9 @@ export interface PerformanceAnalysisDependencies {
   }
   cashLegs?: {
     getByPeriod(periodId: EntityId): Promise<CashMovementLeg[]>
+  }
+  fxEnrichments?: {
+    getByPeriod(periodId: EntityId): Promise<StoredTransactionFx[]>
   }
 }
 
@@ -85,6 +92,10 @@ export function createPerformanceAnalysisService(
       const cashLegs = dependencies.cashLegs
         ? await dependencies.cashLegs.getByPeriod(periodId)
         : undefined
+      const fxRows = dependencies.fxEnrichments
+        ? await dependencies.fxEnrichments.getByPeriod(periodId)
+        : undefined
+      const fxRates = fxRows ? new Map(fxRows.map((row) => [row.transactionId, row.fxRate])) : undefined
       const periodReturn = calculateModifiedDietz({
         investmentResult: base.investmentResult,
         openingValue: base.openingValue,
@@ -108,6 +119,7 @@ export function createPerformanceAnalysisService(
           baseCurrency: closing.currency,
           netContributions: base.netContributions,
           cashLegs,
+          fxRates,
         }),
       }
     },
@@ -121,5 +133,6 @@ export const performanceAnalysisService = createPerformanceAnalysisService({
   transactions: transactionRepository,
   corporateActions: corporateActionRepository,
   cashLegs: cashMovementLegRepository,
+  fxEnrichments: transactionFxRepository,
 })
 

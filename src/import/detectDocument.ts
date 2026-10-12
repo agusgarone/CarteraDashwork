@@ -2,7 +2,7 @@ import type { DocumentType } from '../domain/document'
 
 export type ImportableDocumentType = Extract<
   DocumentType,
-  'CONSOLIDATED_POSITION' | 'MONTHLY_ACCOUNT' | 'MONTHLY_FUND_STATEMENT'
+  'CONSOLIDATED_POSITION' | 'MONTHLY_ACCOUNT' | 'MONTHLY_FUND_STATEMENT' | 'PERIOD_RESULTS'
 >
 
 /**

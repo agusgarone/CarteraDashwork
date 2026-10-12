@@ -10,6 +10,7 @@ const MIGRATIONS = [
   ['002', '002_import_provenance.sql'],
   ['003', '003_cash_movement_legs.sql'],
   ['004', '004_trade_cost_components.sql'],
+  ['005', '005_transaction_fx_enrichments.sql'],
 ] as const
 
 /**

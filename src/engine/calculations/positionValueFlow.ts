@@ -37,6 +37,8 @@ export interface PositionValueFlowAnalysis {
   acquisitionFlows: DecimalString | null
   disposalFlows: DecimalString | null
   costs: PositionCurrencyCost[]
+  /** Costos en moneda extranjera convertidos con el FX explícito de su operación. */
+  convertedForeignCost: DecimalString
   periodPositionResult: DecimalString | null
   valueStatus: PositionFlowStatus
   reason: string | null
@@ -65,11 +67,13 @@ export function analyzePositionValueFlows(input: {
   corporateActions: readonly CorporateAction[]
   cashLegs?: readonly CashMovementLeg[]
   baseCurrency: CurrencyCode
+  fxRates?: ReadonlyMap<string, string>
 }): PositionValueFlowAnalysis[] {
   const quantities = reconcilePositionQuantities(input)
   const opening = indexPositions(input.openingPositions)
   const closing = indexPositions(input.closingPositions)
   const legs = input.cashLegs ?? []
+  const fxRates = input.fxRates ?? new Map<string, string>()
 
   return quantities.map((quantity) => {
     const movements = input.transactions.filter((movement) => movement.instrumentId === quantity.instrumentId)
@@ -82,18 +86,21 @@ export function analyzePositionValueFlows(input: {
       (movement) => movement.type === 'FUND_SUBSCRIPTION' || movement.type === 'FUND_REDEMPTION',
     )
     const costs = tradeCosts(trades, legs)
+    const convertedForeignCost = formatExact(convertedForeignCosts(trades, legs, fxRates, input.baseCurrency))
 
     if (quantity.status === 'QUANTITY_MISMATCH') {
-      return pending(quantity, openingPosition, closingPosition, costs, 'QUANTITY_MISMATCH', 'La cantidad no cierra.')
+      return pending(quantity, openingPosition, closingPosition, costs, convertedForeignCost, 'QUANTITY_MISMATCH', 'La cantidad no cierra.')
     }
 
-    const foreignTrade = trades.find((movement) => movement.currency !== input.baseCurrency)
-    if (foreignTrade) {
+    const foreignTrades = trades.filter((movement) => movement.currency !== input.baseCurrency)
+    const missingFx = foreignTrades.find((movement) => !fxRates.has(movement.id))
+    if (missingFx) {
       return pending(
         quantity,
         openingPosition,
         closingPosition,
         costs,
+        convertedForeignCost,
         'MISSING_TRANSACTION_FX',
         'Pendiente: falta tipo de cambio de la operación.',
       )
@@ -106,13 +113,14 @@ export function analyzePositionValueFlows(input: {
         openingPosition,
         closingPosition,
         costs,
+        convertedForeignCost,
         'QUANTITY_RECONCILED_VALUE_PENDING',
         'La cantidad cierra y falta el bruto de la operación.',
       )
     }
 
-    const acquisition = sumFlows(trades, 'BUY').plus(sumFlows(funds, 'FUND_SUBSCRIPTION'))
-    const disposal = sumFlows(trades, 'SELL').plus(sumFlows(funds, 'FUND_REDEMPTION'))
+    const acquisition = sumFlows(trades, 'BUY', fxRates, input.baseCurrency).plus(sumFlows(funds, 'FUND_SUBSCRIPTION', fxRates, input.baseCurrency))
+    const disposal = sumFlows(trades, 'SELL', fxRates, input.baseCurrency).plus(sumFlows(funds, 'FUND_REDEMPTION', fxRates, input.baseCurrency))
     const result = closingValue.minus(openingValue).minus(acquisition).plus(disposal)
     const corporateOnly =
       trades.length === 0 &&
@@ -138,6 +146,7 @@ export function analyzePositionValueFlows(input: {
       acquisitionFlows: formatExact(acquisition),
       disposalFlows: formatExact(disposal),
       costs,
+      convertedForeignCost,
       periodPositionResult: formatExact(result),
       valueStatus,
       reason: null,
@@ -156,6 +165,7 @@ function pending(
   opening: Position | null,
   closing: Position | null,
   costs: PositionCurrencyCost[],
+  convertedForeignCost: DecimalString,
   valueStatus: PositionFlowStatus,
   reason: string,
 ): PositionValueFlowAnalysis {
@@ -167,6 +177,7 @@ function pending(
     acquisitionFlows: null,
     disposalFlows: null,
     costs,
+    convertedForeignCost,
     periodPositionResult: null,
     valueStatus,
     reason,
@@ -233,10 +244,44 @@ function fallbackRow(trade: Transaction): CashMovementLeg[] {
   ]
 }
 
-function sumFlows(movements: readonly Transaction[], type: Transaction['type']) {
+function sumFlows(
+  movements: readonly Transaction[],
+  type: Transaction['type'],
+  fxRates: ReadonlyMap<string, string>,
+  baseCurrency: CurrencyCode,
+) {
   return movements
     .filter((movement) => movement.type === type)
-    .reduce((total, movement) => total.plus(parseDecimal(flowAmount(movement) ?? '0').abs()), zeroDecimal())
+    .reduce((total, movement) => {
+      const amount = parseDecimal(flowAmount(movement) ?? '0').abs()
+      if (movement.currency === baseCurrency) return total.plus(amount)
+      const rate = fxRates.get(movement.id)
+      return rate ? total.plus(amount.times(rate)) : total
+    }, zeroDecimal())
+}
+
+function convertedForeignCosts(
+  trades: readonly Transaction[],
+  legs: readonly CashMovementLeg[],
+  fxRates: ReadonlyMap<string, string>,
+  baseCurrency: CurrencyCode,
+) {
+  let total = zeroDecimal()
+  for (const trade of trades) {
+    const rate = fxRates.get(trade.id)
+    if (!rate || trade.currency === baseCurrency) continue
+    const reference = operationReference(trade)
+    const matched = legs.filter(
+      (leg) => leg.role === 'TRADE_SETTLEMENT' && reference !== null && leg.operationId === reference,
+    )
+    const rows = matched.length > 0 ? matched : fallbackRow(trade)
+    for (const row of rows) {
+      if (row.currency === baseCurrency || row.currency !== trade.currency) continue
+      const gross = flowAmount(trade) ?? '0'
+      total = total.plus(parseDecimal(economicTradeCost(trade.type === 'SELL' ? 'SELL' : 'BUY', gross, row.amount)).times(rate))
+    }
+  }
+  return total
 }
 
 function flowAmount(movement: Transaction): DecimalString | null {
@@ -250,37 +295,52 @@ export interface PendingAttribution {
     reason: string
   }[]
   cashPerformancePending: boolean
+  /**
+   * La conversión entre cuentas en dólares no trae una tasa ejecutada.
+   * No se usa la diferencia entre cotizaciones como ganancia
+   * ni una reclasificación para obligar a que la caja cierre.
+   */
+  cashPerformanceReason: string | null
 }
 
 /**
  * Suma lo que ya se puede explicar en moneda base.
- * Incluye el resultado de las posiciones seguras, sus costos en pesos
- * y los costos en pesos de las operaciones que todavía no tienen tipo de cambio.
- * No convierte dividendos ni costos en otra moneda.
+ * El resultado de la posición usa el bruto en moneda extranjera por el FX de esa operación.
+ * Los costos en dólares se convierten con el mismo FX y se restan aparte.
+ * Los costos en pesos de una posición pendiente siguen restando.
  */
 export function summarizePartialAttribution(input: {
   flows: readonly PositionValueFlowAnalysis[]
   transactions: readonly Transaction[]
   baseCurrency: CurrencyCode
   cashPerformancePending: boolean
+  cashPerformanceReason?: string | null
+  fxRates?: ReadonlyMap<string, string>
 }): { partialExplainedResult: DecimalString; pendingAttribution: PendingAttribution } {
+  const fxRates = input.fxRates ?? new Map<string, string>()
   let total = zeroDecimal()
   for (const flow of input.flows) {
     if (flow.periodPositionResult !== null && isSafePositionResult(flow.valueStatus)) {
-      total = total.plus(flow.periodPositionResult)
+      total = total.plus(flow.periodPositionResult).minus(flow.convertedForeignCost)
     }
     total = total.minus(baseCurrencyCost(flow, input.baseCurrency))
   }
   for (const movement of input.transactions) {
-    if (movement.currency !== input.baseCurrency || movement.netAmount === null) continue
+    if (movement.netAmount === null) continue
     if (
-      movement.type === 'DIVIDEND' ||
-      movement.type === 'INTEREST' ||
-      movement.type === 'TAX' ||
-      movement.type === 'FEE'
+      movement.type !== 'DIVIDEND' &&
+      movement.type !== 'INTEREST' &&
+      movement.type !== 'TAX' &&
+      movement.type !== 'FEE'
     ) {
-      total = total.plus(movement.netAmount)
+      continue
     }
+    if (movement.currency === input.baseCurrency) {
+      total = total.plus(movement.netAmount)
+      continue
+    }
+    const rate = fxRates.get(movement.id)
+    if (rate) total = total.plus(parseDecimal(movement.netAmount).times(rate))
   }
   return {
     partialExplainedResult: formatExact(total),
@@ -293,6 +353,7 @@ export function summarizePartialAttribution(input: {
           reason: flow.reason ?? flow.valueStatus,
         })),
       cashPerformancePending: input.cashPerformancePending,
+      cashPerformanceReason: input.cashPerformanceReason ?? null,
     },
   }
 }

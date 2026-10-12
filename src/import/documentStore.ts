@@ -33,7 +33,7 @@ export function fileNameOf(filePath: string): string {
 
 /**
  * Conserva la extensión del archivo elegido.
- * .xlsx queda reservada para cuando exista ese parser: hoy el selector solo ofrece PDF.
+ * El selector ofrece PDF y el Excel de Resultados del período.
  */
 export function originalExtension(filename: string): string {
   const base = fileNameOf(filename)

@@ -208,7 +208,7 @@ describe('ImportPeriodService contra SQLite', () => {
     expect(run[0]?.engine_version).toBe('1')
 
     const versions = await world.client.select<{ version: string }>('SELECT version FROM schema_migrations ORDER BY version')
-    expect(versions.map((row) => row.version)).toEqual(['001', '002', '003', '004'])
+    expect(versions.map((row) => row.version)).toEqual(['001', '002', '003', '004', '005'])
 
     for (const file of world.files) {
       expect(await readFile(file.originalPath)).toBeTruthy()

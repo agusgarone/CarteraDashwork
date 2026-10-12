@@ -13,6 +13,7 @@ import { createPeriodAnalysisService, periodStartDate } from '../engine/services
 import { ENGINE_VERSION } from '../engine/version'
 import { reconciliationStatus } from '../import/reconciliationPolicy'
 import { createCashMovementLegRepository } from '../repositories/cashMovementLegRepository'
+import { createTransactionFxRepository } from '../repositories/transactionFxRepository'
 import { createCorporateActionRepository } from '../repositories/corporateActionRepository'
 import { createDocumentRepository } from '../repositories/documentRepository'
 import { createInstrumentRepository } from '../repositories/instrumentRepository'
@@ -180,6 +181,7 @@ export async function loadPortfolioOverview(options: {
   const transactions = createTransactionRepository(db)
   const corporateActions = createCorporateActionRepository(db)
   const cashLegs = createCashMovementLegRepository(db)
+  const fxEnrichments = createTransactionFxRepository(db)
   const portfolio = (await portfolios.getAll())[0]
   if (!portfolio) return null
 
@@ -207,6 +209,7 @@ export async function loadPortfolioOverview(options: {
     transactions,
     corporateActions,
     cashLegs,
+    fxEnrichments,
   })
 
   let openingValue = run?.openingValue ?? null
