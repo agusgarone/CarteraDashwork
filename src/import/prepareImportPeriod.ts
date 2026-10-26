@@ -1,3 +1,4 @@
+import { matchesPeriodClose } from './snapshotPeriodDate'
 import type { DocumentType } from '../domain/document'
 import { parseBalanzConsolidatedPositionDocument, parseBalanzConsolidatedPositionText } from '../parsers/balanz/consolidatedPosition'
 import { parseBalanzMonthlyAccountDocument, parseBalanzMonthlyAccountText } from '../parsers/balanz/monthlyAccount'
@@ -154,12 +155,12 @@ function classify(inputs: ParsedInput[]): PreparedImport {
   assertMonthlyAccountReadable(account)
   const fund = parseFund(fundInput)
   const consolidated = positions.map((input) => ({ input, position: parsePosition(input) }))
-  const closing = consolidated.find((item) => item.position.snapshotDate === account.period.endDate)
+  const closing = consolidated.find((item) => matchesPeriodClose(item.position.snapshotDate, account.period.endDate))
   const opening = consolidated.find((item) => item.position.snapshotDate < account.period.startDate)
   if (!closing || consolidated.length !== (opening ? 2 : 1)) {
     throw new ImportPeriodValidationError('Las posiciones no cierran el período del resumen mensual.')
   }
-  if (fund.reportDate !== closing.position.snapshotDate) {
+  if (fund.reportDate !== account.period.endDate && fund.reportDate !== closing.position.snapshotDate) {
     throw new ImportPeriodValidationError('El resumen de fondos no corresponde a la fecha de cierre.')
   }
 
@@ -197,6 +198,7 @@ function classify(inputs: ParsedInput[]): PreparedImport {
         consolidatedPosition: closing.position,
         fundStatement: fund,
         snapshotDate: closing.position.snapshotDate,
+        statementDate: fund.reportDate,
         holdingCurrency: 'ARS',
       }),
     },

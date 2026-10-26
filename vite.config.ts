@@ -15,6 +15,11 @@ export default defineConfig({
       '@': path.resolve(root, './src'),
     },
   },
+  server: {
+    watch: {
+      ignored: ['**/src-tauri/target/**'],
+    },
+  },
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts'],

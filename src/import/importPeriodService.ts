@@ -296,6 +296,7 @@ export function createImportPeriodService(options: ImportPeriodServiceOptions): 
     assertPeriodResultsMatch(prepared.results.parsed, {
       openingDate: prepared.opening?.position.snapshotDate ?? reusedOpening?.snapshot.date ?? null,
       closingDate: prepared.closing.position.snapshotDate,
+      calendarPeriod: prepared.account.parsed.period,
     })
   }
 
@@ -402,6 +403,24 @@ export function createImportPeriodService(options: ImportPeriodServiceOptions): 
       })
     }
 
+    // An instrument bought and fully sold within the month has no boundary position.
+    // Keep its trades even when the documents do not provide a normalized category.
+    const knownInstruments = await instruments.getAll()
+    const movementTickers = new Set([
+      ...prepared.account.parsed.transactions.map(row => row.ticker),
+      ...prepared.account.parsed.corporateActions.map(row => row.ticker),
+    ])
+    for (const ticker of movementTickers) {
+      if (!ticker || instrumentRows.some(row => row.ticker === ticker)) continue
+      const known = knownInstruments.filter(row => row.ticker === ticker)
+      if (known.length > 1) throw new ImportPeriodValidationError(`No hay un instrumento único para ${ticker}.`)
+      const found = known[0]
+      const category = found?.category ?? 'OTHER'
+      instrumentRows.push({
+        key: instrumentKey(ticker, category), existingId: found?.id ?? null,
+        ticker, name: found?.name ?? ticker, category, currency: found?.currency ?? 'ARS',
+      })
+    }
     const openingAdapted = prepared.opening
       ? adaptConsolidatedPosition(prepared.opening.enriched.position, {
           portfolioId,

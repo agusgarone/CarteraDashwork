@@ -68,12 +68,25 @@ export function planTransactionFxEnrichments(
 
 export function assertPeriodResultsMatch(
   parsed: ParsedPeriodResults,
-  bounds: { openingDate: string | null; closingDate: string },
+  bounds: { openingDate: string | null; closingDate: string; calendarPeriod?: { startDate: string; endDate: string } },
 ): void {
-  if (parsed.closingDate !== bounds.closingDate) {
+  // XLSX lots describe calendar boundaries; a snapshot keeps its actual valuation date.
+  // The PDF import has already validated the closing snapshot against this period.
+  let expectedOpening = bounds.openingDate
+  const expectedClosing = bounds.calendarPeriod?.endDate ?? bounds.closingDate
+  if (bounds.calendarPeriod) {
+    const opening = new Date(`${bounds.calendarPeriod.startDate}T00:00:00Z`)
+    opening.setUTCDate(opening.getUTCDate() - 1)
+    expectedOpening = opening.toISOString().slice(0, 10)
+    // Do not use an old snapshot from an earlier month to explain a monthly workbook.
+    if (bounds.openingDate && bounds.openingDate.slice(0, 7) !== expectedOpening.slice(0, 7)) {
+      throw new ImportPeriodValidationError('El snapshot de apertura no corresponde al mes inicial del archivo de resultados.')
+    }
+  }
+  if (parsed.closingDate !== expectedClosing) {
     throw new ImportPeriodValidationError('El archivo de resultados no corresponde a este período.')
   }
-  if (bounds.openingDate && parsed.openingDate !== bounds.openingDate) {
+  if (expectedOpening && parsed.openingDate !== expectedOpening) {
     throw new ImportPeriodValidationError('El archivo de resultados no corresponde a este período.')
   }
 }
