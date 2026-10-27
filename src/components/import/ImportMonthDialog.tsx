@@ -13,6 +13,7 @@ import { describeImportFailure } from '@/application/importFailure'
 import type { ImportPeriodResultView } from '@/application/importPeriodApplication'
 import {
   importDialogReducer,
+  importDocumentChecklist,
   importOutcomeCopy,
   initialImportDialogState,
 } from '@/application/importDialogState'
@@ -119,13 +120,13 @@ export function ImportMonthDialog() {
         <DialogHeader>
           <DialogTitle className="text-lg">Actualizar cartera</DialogTitle>
           <DialogDescription>
-            Elegí los PDF del período. El tipo de cada documento se reconoce por el contenido.
+            Elegí los documentos del período. El tipo de cada documento se reconoce por el contenido.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-5">
           <p className="text-sm text-muted-foreground">
-            Posición consolidada de cierre, resumen mensual comitente y resumen de fondos. La posición de apertura es opcional si ese snapshot ya está importado.
+            Posición consolidada de cierre, resumen mensual comitente y resumen de fondos. La posición de apertura es opcional si ese snapshot ya está importado. Resultados del período es un Excel opcional.
           </p>
 
           {state.status === 'unavailable' ? (
@@ -206,6 +207,17 @@ function ImportResult({ result }: { result: ImportPeriodResultView }) {
       </p>
       {copy.note ? <p className="mt-2 text-sm text-muted-foreground">{copy.note}</p> : null}
       <p className="mt-4 text-sm font-medium">{month} {result.period.year}</p>
+      <ul className="mt-3 space-y-1 text-sm">
+        {importDocumentChecklist(result.documents.map((document) => document.type)).map((item) => (
+          <li key={item.label} className="flex justify-between gap-4">
+            <span>{item.label}</span>
+            <span className={item.present ? 'text-positive' : 'text-muted-foreground'}>
+              {item.present ? '✓' : '—'}
+              {item.optional ? ' Opcional' : ''}
+            </span>
+          </li>
+        ))}
+      </ul>
       <ul className="mt-3 space-y-1 text-sm text-muted-foreground">
         {result.documents.map((document) => (
           <li key={`${document.type}-${document.date}-${document.fileName}`}>

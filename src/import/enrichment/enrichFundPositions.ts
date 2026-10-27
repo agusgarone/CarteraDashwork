@@ -64,6 +64,8 @@ export interface FundEnrichmentInput {
   consolidatedPosition: ParsedConsolidatedPosition
   fundStatement: ParsedMonthlyFundStatement
   snapshotDate: string
+  /** Validated statement close; may fall on the weekend after the snapshot. */
+  statementDate?: string
   /** Moneda de los valores de la posición consolidada. En Balanz son pesos. */
   holdingCurrency: CurrencyCode
 }
@@ -125,7 +127,7 @@ export function enrichFundPositions(input: FundEnrichmentInput): FundEnrichmentR
       audits.push(audit(identity, consolidatedSourceFields))
       return position
     }
-    const rows = fund.rows.filter((row) => row.date === input.snapshotDate && POSITION_STATE.has(row.type))
+    const rows = fund.rows.filter((row) => row.date === (input.statementDate ?? input.snapshotDate) && POSITION_STATE.has(row.type))
     if (rows.length === 0) {
       warnings.push(warn('MISSING_DATE', 'El fondo no tiene un estado en la fecha del snapshot.', identity))
       audits.push(audit(identity, consolidatedSourceFields))

@@ -155,6 +155,30 @@ describe('conciliación de cantidad', () => {
     expect(flow.valueStatus).toBe('MISSING_TRANSACTION_FX')
     expect(flow.periodPositionResult).toBeNull()
     expect(flow.reason).toBe('Pendiente: falta tipo de cambio de la operación.')
+
+    const priced = buy('ypfd', '2', '93.98', 'USD_MEP', '7321989')
+    const [explained] = analyze(
+      [
+        {
+          instrumentId: 'ypfd',
+          openingQty: '12',
+          openingValue: '853500.00',
+          closingQty: '14',
+          closingValue: '1160600.00',
+          trades: [priced],
+        },
+      ],
+      [
+        leg('7321989', 'USD_MEP', '-94.45', { commission: '0.47' }),
+        leg('7321989', 'ARS', '-231.47', { vat: '146.87', marketFees: '84.60' }),
+      ],
+      [],
+      new Map([[priced.id, '1523.66']]),
+    )
+    expect(explained.valueStatus).toBe('VALUATION_EXPLAINED')
+    expect(explained.acquisitionFlows).toBe('143193.5668')
+    expect(explained.periodPositionResult).toBe('163906.4332')
+    expect(explained.convertedForeignCost).toBe('716.1202')
     expect(flow.costs).toEqual([
       expect.objectContaining({
         currency: 'USD_MEP',
@@ -295,6 +319,7 @@ function analyze(
   }[],
   legs: CashMovementLeg[] = [],
   extra: Transaction[] = [],
+  fxRates?: ReadonlyMap<string, string>,
 ) {
   return analyzePositionValueFlows({
     openingPositions: specs
@@ -307,6 +332,7 @@ function analyze(
     corporateActions: [],
     cashLegs: legs,
     baseCurrency: 'ARS',
+    fxRates,
   })
 }
 

@@ -1,6 +1,9 @@
+import { resolveOperationTicker } from '../parsers/balanz/operationTicker'
 import type { DatabaseClient } from '../database/client'
 import type { EntityId } from '../domain/common'
 import type { InstrumentCategory } from '../domain/instrument'
+import type { CashBalance, PortfolioSnapshotAggregate } from '../domain/snapshot'
+import { parseDecimal } from '../engine/money'
 import { ENGINE_VERSION } from '../engine/version'
 import type { PeriodPerformanceAnalysis } from '../engine/models/periodPerformance'
 import { createPerformanceAnalysisService } from '../engine/services/performanceAnalysisService'
@@ -15,9 +18,11 @@ import { createPortfolioRepository } from '../repositories/portfolioRepository'
 import { createReconciliationRepository } from '../repositories/reconciliationRepository'
 import { createSnapshotRepository } from '../repositories/snapshotRepository'
 import { createTransactionRepository } from '../repositories/transactionRepository'
+import { createTransactionFxRepository } from '../repositories/transactionFxRepository'
 import { adaptConsolidatedPosition } from './adapters/consolidatedPositionAdapter'
 import { adaptMonthlyAccount } from './adapters/monthlyAccountAdapter'
 import { cashMovementLegsFromAccount } from './cashMovementLegs'
+import { assertPeriodResultsMatch, planTransactionFxEnrichments } from './enrichment/periodResultsEnrichment'
 import type { ImportFileSystem } from './documentStore'
 import { fundMatchKeyFromConsolidatedName } from './fundIdentity'
 import { ImportConflictError, ImportPeriodValidationError } from './importPeriodErrors'
@@ -34,7 +39,6 @@ import {
   prepareImportPeriod,
   type ClassifiedPosition,
   type ImportFile,
-  type PreparedFile,
   type PreparedImport,
 } from './prepareImportPeriod'
 import { reconciliationStatus } from './reconciliationPolicy'
@@ -105,6 +109,8 @@ export function createImportPeriodService(options: ImportPeriodServiceOptions): 
         const prepared = await prepareImportPeriod(input.files, stagingDir, fileSystem)
         await rememberExistingDocuments(prepared, input.portfolioId)
         const reusedOpeningId = await resolveOpening(prepared, input.portfolioId)
+        const reusedClosingId = await reusableSnapshotId(input.portfolioId, prepared.closing)
+        await assertResultsBelongToPeriod(prepared, reusedOpeningId)
         await assertPeriodIsNewOrSameFiles(prepared, input.portfolioId)
 
         const alreadyImported = await existingImport(prepared, input.portfolioId, reusedOpeningId)
@@ -113,8 +119,30 @@ export function createImportPeriodService(options: ImportPeriodServiceOptions): 
             alreadyImported.periodId,
             cashMovementLegsFromAccount(prepared.account.parsed),
           )
+          await writeResultsEnrichment(prepared, alreadyImported.periodId)
           const analysis = await readAnalysis(alreadyImported.periodId)
           return { outcome: 'existing', ...alreadyImported, analysis }
+        }
+
+        const resultsOnly = await resultsOnlyImport(prepared, input.portfolioId, reusedOpeningId)
+        if (resultsOnly && prepared.results) {
+          const file = prepared.results.file
+          const published = await fileSystem.publish(options.appDataDir, file.relativePath, file.stagedPath)
+          if (published.created) createdFiles.push(file.relativePath)
+          await options.beforePersist?.()
+          await documents.create({
+            periodId: resultsOnly.periodId,
+            type: 'PERIOD_RESULTS',
+            originalFilename: file.originalFileName,
+            localPath: file.relativePath,
+            sha256: file.sha256,
+            processingStatus: 'PROCESSED',
+            parserVersion: PARSER_VERSION,
+          })
+          persisted = true
+          await writeResultsEnrichment(prepared, resultsOnly.periodId)
+          const analysis = await readAnalysis(resultsOnly.periodId)
+          return { outcome: 'imported', ...resultsOnly, analysis }
         }
 
         for (const file of prepared.files) {
@@ -124,9 +152,16 @@ export function createImportPeriodService(options: ImportPeriodServiceOptions): 
         }
 
         await options.beforePersist?.()
-        const plan = await buildPlan(prepared, input.portfolioId, reusedOpeningId, options.now?.() ?? new Date().toISOString())
+        const plan = await buildPlan(
+          prepared,
+          input.portfolioId,
+          reusedOpeningId,
+          reusedClosingId,
+          options.now?.() ?? new Date().toISOString(),
+        )
         const saved = await persistImportPlan(db, plan)
         persisted = true
+        await writeResultsEnrichment(prepared, saved.closingPeriodId)
         const analysis = await readAnalysis(saved.closingPeriodId)
         return {
           outcome: 'imported',
@@ -171,11 +206,7 @@ export function createImportPeriodService(options: ImportPeriodServiceOptions): 
   }
 
   async function resolveOpening(prepared: PreparedImport, portfolioId: EntityId): Promise<EntityId | null> {
-    if (prepared.opening) {
-      await assertSnapshotHash(portfolioId, prepared.opening.position.snapshotDate, prepared.opening.file)
-      const snapshot = await snapshots.getByDate(portfolioId, prepared.opening.position.snapshotDate)
-      return snapshot?.id ?? null
-    }
+    if (prepared.opening) return reusableSnapshotId(portfolioId, prepared.opening)
     const existing = await snapshots.getLatestBefore(portfolioId, prepared.account.parsed.period.startDate)
     if (!existing) {
       throw new ImportPeriodValidationError('Falta la posición de apertura y no hay un snapshot anterior.')
@@ -183,25 +214,101 @@ export function createImportPeriodService(options: ImportPeriodServiceOptions): 
     return existing.id
   }
 
-  async function assertSnapshotHash(portfolioId: EntityId, date: string, file: PreparedFile): Promise<void> {
+  /**
+   * Un snapshot es el estado de la cartera en una fecha.
+   * El mismo archivo puede ser el cierre de un mes y la apertura del siguiente.
+   * Si la fecha ya existe con otro documento o con otros valores, no se pisa.
+   */
+  async function reusableSnapshotId(portfolioId: EntityId, classified: ClassifiedPosition): Promise<EntityId | null> {
+    const date = classified.position.snapshotDate
     const snapshot = await snapshots.getByDate(portfolioId, date)
-    if (!snapshot) return
+    if (!snapshot) return null
     if (!snapshot.sourceDocumentId) {
       throw new ImportConflictError(`Ya hay un snapshot el ${date} sin documento de origen.`)
     }
     const source = await documents.getById(snapshot.sourceDocumentId)
-    if (!source || source.sha256 !== file.sha256) {
+    if (!source || source.sha256 !== classified.file.sha256) {
       throw new ImportConflictError(`Ya hay otro documento para el snapshot ${date}.`)
     }
+    const aggregate = await snapshots.getAggregate(snapshot.id)
+    const incomingCash = adaptConsolidatedPosition(classified.enriched.position, {
+      portfolioId,
+      periodId: snapshot.periodId,
+      createdAt: snapshot.createdAt,
+    }).cashBalances
+    if (!aggregate || !(await sameSnapshotContent(aggregate, classified, incomingCash))) {
+      throw new ImportConflictError(`Ya hay otro documento para el snapshot ${date}.`)
+    }
+    return snapshot.id
+  }
+
+  async function sameSnapshotContent(
+    stored: PortfolioSnapshotAggregate,
+    classified: ClassifiedPosition,
+    incomingCash: readonly CashBalance[],
+  ): Promise<boolean> {
+    if (!sameMoney(stored.snapshot.totalValue, classified.position.reportedTotal)) return false
+    if (!sameCash(stored.cashBalances, incomingCash)) return false
+    const known = new Map((await instruments.getAll()).map((instrument) => [instrument.id, instrument]))
+    const storedHoldings = stored.positions.map((position) => {
+      const instrument = known.get(position.instrumentId)
+      return {
+        key: instrument ? `${instrument.ticker}|${instrument.category}` : position.instrumentId,
+        quantity: position.quantity,
+        unitPrice: position.unitPrice,
+        marketValue: position.marketValue,
+      }
+    })
+    const incomingHoldings = classified.enriched.position.positions.map((position) => ({
+      key: `${position.ticker}|${position.normalizedCategory}`,
+      quantity: position.quantity,
+      unitPrice: position.unitPrice ?? '',
+      marketValue: position.marketValue,
+    }))
+    if (storedHoldings.length !== incomingHoldings.length) return false
+    const incomingByKey = new Map(incomingHoldings.map((holding) => [holding.key, holding]))
+    if (incomingByKey.size !== incomingHoldings.length) return false
+    return storedHoldings.every((holding) => {
+      const incoming = incomingByKey.get(holding.key)
+      return (
+        incoming !== undefined &&
+        sameMoney(holding.quantity, incoming.quantity) &&
+        sameMoney(holding.unitPrice, incoming.unitPrice) &&
+        sameMoney(holding.marketValue, incoming.marketValue)
+      )
+    })
   }
 
   async function assertPeriodIsNewOrSameFiles(prepared: PreparedImport, portfolioId: EntityId): Promise<void> {
-    await assertSnapshotHash(portfolioId, prepared.closing.position.snapshotDate, prepared.closing.file)
     const period = await periods.getByYearMonth(portfolioId, prepared.closingPeriod.year, prepared.closingPeriod.month)
+    if (period?.status !== 'COMPLETE') return
+    const requiredKnown = prepared.files
+      .filter((file) => file.kind !== 'PERIOD_RESULTS')
+      .every((file) => file.existingDocumentId)
+    const addingResults = prepared.results !== null && prepared.results.file.existingDocumentId === null && requiredKnown
     const sameFiles = prepared.files.every((file) => file.existingDocumentId)
-    if (period?.status === 'COMPLETE' && !sameFiles) {
-      throw new ImportConflictError('El período ya fue importado con otros documentos.')
-    }
+    if (sameFiles || addingResults) return
+    throw new ImportConflictError('El período ya fue importado con otros documentos.')
+  }
+
+  async function assertResultsBelongToPeriod(prepared: PreparedImport, reusedOpeningId: EntityId | null): Promise<void> {
+    if (!prepared.results) return
+    const reusedOpening = reusedOpeningId ? await snapshots.getAggregate(reusedOpeningId) : null
+    assertPeriodResultsMatch(prepared.results.parsed, {
+      openingDate: prepared.opening?.position.snapshotDate ?? reusedOpening?.snapshot.date ?? null,
+      closingDate: prepared.closing.position.snapshotDate,
+      calendarPeriod: prepared.account.parsed.period,
+    })
+  }
+
+  async function writeResultsEnrichment(prepared: PreparedImport, periodId: EntityId): Promise<void> {
+    if (!prepared.results) return
+    const stored = await documents.getByHash(prepared.results.file.sha256)
+    if (!stored) return
+    const fx = createTransactionFxRepository(db)
+    const targets = await fx.targetsByPeriod(periodId)
+    const planned = planTransactionFxEnrichments(prepared.results.parsed, targets)
+    await fx.saveIfMissing(stored.id, planned)
   }
 
   async function existingImport(
@@ -210,6 +317,27 @@ export function createImportPeriodService(options: ImportPeriodServiceOptions): 
     reusedOpeningId: EntityId | null,
   ): Promise<{ periodId: EntityId; openingSnapshotId: EntityId; closingSnapshotId: EntityId } | null> {
     if (prepared.files.some((file) => !file.existingDocumentId)) return null
+    const period = await periods.getByYearMonth(portfolioId, prepared.closingPeriod.year, prepared.closingPeriod.month)
+    const closing = await snapshots.getByDate(portfolioId, prepared.closing.position.snapshotDate)
+    const openingSnapshot = prepared.opening
+      ? await snapshots.getByDate(portfolioId, prepared.opening.position.snapshotDate)
+      : reusedOpeningId
+        ? (await snapshots.getAggregate(reusedOpeningId))?.snapshot ?? null
+        : null
+    if (!period || period.status !== 'COMPLETE' || !openingSnapshot || !closing) return null
+    return { periodId: period.id, openingSnapshotId: openingSnapshot.id, closingSnapshotId: closing.id }
+  }
+
+  async function resultsOnlyImport(
+    prepared: PreparedImport,
+    portfolioId: EntityId,
+    reusedOpeningId: EntityId | null,
+  ): Promise<{ periodId: EntityId; openingSnapshotId: EntityId; closingSnapshotId: EntityId } | null> {
+    if (!prepared.results || prepared.results.file.existingDocumentId) return null
+    const requiredKnown = prepared.files
+      .filter((file) => file.kind !== 'PERIOD_RESULTS')
+      .every((file) => file.existingDocumentId)
+    if (!requiredKnown) return null
     const period = await periods.getByYearMonth(portfolioId, prepared.closingPeriod.year, prepared.closingPeriod.month)
     const closing = await snapshots.getByDate(portfolioId, prepared.closing.position.snapshotDate)
     const openingSnapshot = prepared.opening
@@ -246,6 +374,7 @@ export function createImportPeriodService(options: ImportPeriodServiceOptions): 
     prepared: PreparedImport,
     portfolioId: EntityId,
     reusedOpeningId: EntityId | null,
+    reusedClosingId: EntityId | null,
     completedAt: string,
   ): Promise<ImportPersistencePlan> {
     const openingPeriod = prepared.openingPeriod
@@ -275,6 +404,24 @@ export function createImportPeriodService(options: ImportPeriodServiceOptions): 
       })
     }
 
+    // An instrument bought and fully sold within the month has no boundary position.
+    // Keep its trades even when the documents do not provide a normalized category.
+    const knownInstruments = await instruments.getAll()
+    const movementTickers = new Set([
+      ...prepared.account.parsed.transactions.map(row => row.ticker),
+      ...prepared.account.parsed.corporateActions.map(row => row.ticker),
+    ])
+    for (const ticker of movementTickers) {
+      if (!ticker || instrumentRows.some(row => row.ticker === ticker)) continue
+      const known = knownInstruments.filter(row => row.ticker === ticker)
+      if (known.length > 1) throw new ImportPeriodValidationError(`No hay un instrumento único para ${ticker}.`)
+      const found = known[0]
+      const category = found?.category ?? 'OTHER'
+      instrumentRows.push({
+        key: instrumentKey(ticker, category), existingId: found?.id ?? null,
+        ticker, name: found?.name ?? ticker, category, currency: found?.currency ?? 'ARS',
+      })
+    }
     const openingAdapted = prepared.opening
       ? adaptConsolidatedPosition(prepared.opening.enriched.position, {
           portfolioId,
@@ -357,7 +504,7 @@ export function createImportPeriodService(options: ImportPeriodServiceOptions): 
                 enrichedDifference: '0',
               },
             ]),
-        snapshotRow('closing', 'closing', prepared.closing, closingAdapted.cashBalances, null),
+        snapshotRow('closing', 'closing', prepared.closing, closingAdapted.cashBalances, reusedClosingId),
       ],
       transactions: movements.transactions.map((movement, index) =>
         transactionRow(movement, prepared.account.parsed.transactions[index]?.ticker ?? null, instrumentRows),
@@ -387,13 +534,16 @@ async function analyzeFromDatabase(db: DatabaseClient, periodId: EntityId): Prom
   const transactions = createTransactionRepository(db)
   const corporateActions = createCorporateActionRepository(db)
   const cashLegs = createCashMovementLegRepository(db)
+  const fxEnrichments = createTransactionFxRepository(db)
   const service = createPerformanceAnalysisService({
+    instruments: createInstrumentRepository(db),
     analysis: createPeriodAnalysisService({ periods, snapshots, transactions }),
     periods,
     snapshots,
     transactions,
     corporateActions,
     cashLegs,
+    fxEnrichments,
   })
   return service.analyzePeriod(periodId)
 }
@@ -464,6 +614,10 @@ function transactionRow(
   ticker: string | null,
   instrumentRows: readonly ImportInstrumentRow[],
 ): ImportTransactionRow {
+  const explicitTicker = resolveOperationTicker({ description: movement.sourceReference ?? '' })
+  if (explicitTicker && ticker !== explicitTicker) {
+    throw new ImportPeriodValidationError(`El instrumento de la operación ${movement.sourceReference} no coincide con ${ticker ?? 'ninguno'}.`)
+  }
   return {
     instrumentKey: ticker ? instrumentKeyForTicker(ticker, instrumentRows) : null,
     documentKey: 'monthly-account',
@@ -513,4 +667,23 @@ function instrumentKeyForTicker(ticker: string, instrumentRows: readonly ImportI
 
 function instrumentKey(ticker: string, category: InstrumentCategory | string): string {
   return `${ticker}|${category}`
+}
+
+function sameCash(stored: readonly CashBalance[], incoming: readonly CashBalance[]): boolean {
+  if (stored.length !== incoming.length) return false
+  const incomingByCurrency = new Map(incoming.map((balance) => [balance.currency, balance]))
+  return stored.every((balance) => {
+    const other = incomingByCurrency.get(balance.currency)
+    return (
+      other !== undefined &&
+      sameMoney(balance.amount, other.amount) &&
+      sameMoney(balance.fxRate, other.fxRate) &&
+      sameMoney(balance.valueInBaseCurrency, other.valueInBaseCurrency)
+    )
+  })
+}
+
+function sameMoney(left: string | null, right: string | null): boolean {
+  if (left === null || right === null) return left === right
+  return parseDecimal(left).eq(right)
 }

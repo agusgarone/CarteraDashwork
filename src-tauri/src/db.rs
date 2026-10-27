@@ -9,12 +9,14 @@ const SCHEMA_SQL: &str = include_str!("../migrations/001_initial_schema.sql");
 const PROVENANCE_SQL: &str = include_str!("../migrations/002_import_provenance.sql");
 const CASH_LEGS_SQL: &str = include_str!("../migrations/003_cash_movement_legs.sql");
 const TRADE_COSTS_SQL: &str = include_str!("../migrations/004_trade_cost_components.sql");
+const FX_ENRICHMENTS_SQL: &str = include_str!("../migrations/005_transaction_fx_enrichments.sql");
 
 const MIGRATIONS: &[(&str, &str)] = &[
     ("001", SCHEMA_SQL),
     ("002", PROVENANCE_SQL),
     ("003", CASH_LEGS_SQL),
     ("004", TRADE_COSTS_SQL),
+    ("005", FX_ENRICHMENTS_SQL),
 ];
 
 /// Una referencia al `last_insert_rowid` de una sentencia anterior de la misma transacción.
@@ -471,6 +473,7 @@ mod tests {
                 "002".to_string(),
                 "003".to_string(),
                 "004".to_string(),
+                "005".to_string(),
             ]
         );
 

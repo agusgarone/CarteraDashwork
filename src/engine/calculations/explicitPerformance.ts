@@ -36,6 +36,8 @@ export interface ExplicitPerformanceInput {
    * inventa un resultado económico de caja.
    */
   cashLegs?: readonly CashMovementLeg[]
+  /** FX explícito de Resultados del período, ya asociado a una transacción. */
+  fxRates?: ReadonlyMap<string, string>
 }
 
 /**
@@ -146,6 +148,7 @@ export function reconcileExplicitPerformance(
     corporateActions: input.corporateActions ?? [],
     cashLegs: input.cashLegs,
     baseCurrency,
+    fxRates: input.fxRates,
   })
   const cash = reconcileCash({
     openingCashBalances: input.openingCashBalances ?? [],
@@ -172,6 +175,8 @@ export function reconcileExplicitPerformance(
       transactions: input.transactions,
       baseCurrency,
       cashPerformancePending: true,
+      cashPerformanceReason: cashPerformanceReason(input.cashLegs ?? []),
+      fxRates: input.fxRates,
     })
     const breakdown: PerformanceBreakdown = {
       valuationChange: calculateTotalValuationChange(positionResults),
@@ -244,6 +249,19 @@ function explicitBreakdownWhenCashIsInvalid(
     }
   }
   return calculateExplicitPerformanceBreakdown(transactions)
+}
+
+/**
+ * Una conversión entre USD cable y USD MEP mueve saldo entre cuentas.
+ * El documento no informa la tasa ejecutada de esa transferencia.
+ * No se resta el valor MEP del valor CCL ni se inventa una reclasificación
+ * para que el resultado de caja cierre.
+ */
+export function cashPerformanceReason(legs: readonly { role: string }[]): string {
+  if (legs.some((leg) => leg.role === 'FX_CONVERSION')) {
+    return 'La conversión entre cuentas en dólares no tiene una tasa ejecutada. El resultado económico de caja sigue pendiente.'
+  }
+  return 'El resultado económico de caja sigue pendiente.'
 }
 
 function requiredCurrency(currency: CurrencyCode | undefined): CurrencyCode {

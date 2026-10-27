@@ -11,6 +11,7 @@ import type { PositionValuationResult, PositionValuationStatus } from '../engine
 import { createPerformanceAnalysisService } from '../engine/services/performanceAnalysisService'
 import { createPeriodAnalysisService, periodStartDate } from '../engine/services/periodAnalysisService'
 import { createCashMovementLegRepository } from '../repositories/cashMovementLegRepository'
+import { createTransactionFxRepository } from '../repositories/transactionFxRepository'
 import { createCorporateActionRepository } from '../repositories/corporateActionRepository'
 import { createInstrumentRepository } from '../repositories/instrumentRepository'
 import { createPeriodRepository } from '../repositories/periodRepository'
@@ -183,6 +184,7 @@ export async function loadPortfolioDetail(options: {
   const transactions = createTransactionRepository(db)
   const corporateActions = createCorporateActionRepository(db)
   const cashLegs = createCashMovementLegRepository(db)
+  const fxEnrichments = createTransactionFxRepository(db)
   const sources = createPositionSourceRepository(db)
   const portfolio = (await portfolios.getAll())[0]
   if (!portfolio) return null
@@ -198,12 +200,14 @@ export async function loadPortfolioDetail(options: {
   const openingAggregate = opening ? await snapshots.getAggregate(opening.id) : null
 
   const performance = createPerformanceAnalysisService({
+    instruments,
     analysis: createPeriodAnalysisService({ periods, snapshots, transactions }),
     periods,
     snapshots,
     transactions,
     corporateActions,
     cashLegs,
+    fxEnrichments,
   })
 
   let valuation: PositionValuationResult[] = []

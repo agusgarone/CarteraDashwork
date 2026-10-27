@@ -1,3 +1,4 @@
+import { matchesPeriodClose } from './snapshotPeriodDate'
 import type { DocumentType } from '../domain/document'
 import { parseBalanzConsolidatedPositionDocument, parseBalanzConsolidatedPositionText } from '../parsers/balanz/consolidatedPosition'
 import { parseBalanzMonthlyAccountDocument, parseBalanzMonthlyAccountText } from '../parsers/balanz/monthlyAccount'
@@ -8,6 +9,8 @@ import {
 import type { ParsedConsolidatedPosition } from '../parsers/models/parsedConsolidatedPosition'
 import type { ParsedMonthlyAccount } from '../parsers/models/parsedMonthlyAccount'
 import type { ParsedMonthlyFundStatement } from '../parsers/models/parsedMonthlyFundStatement'
+import type { ParsedPeriodResults } from '../parsers/models/parsedPeriodResults'
+import { parseBalanzPeriodResults, PeriodResultsFormatError } from '../parsers/balanz/periodResults'
 import { extractPdfDocument, type PdfTextDocument } from '../parsers/text/extractPdfText'
 import { detectBalanzDocument, type ImportableDocumentType } from './detectDocument'
 import { documentRelativePath, originalExtension, type ImportFileSystem } from './documentStore'
@@ -48,12 +51,14 @@ export interface PreparedImport {
   fund: { file: PreparedFile; parsed: ParsedMonthlyFundStatement }
   openingPeriod: { year: number; month: number } | null
   closingPeriod: { year: number; month: number }
+  results: { file: PreparedFile; parsed: ParsedPeriodResults } | null
 }
 
 const SLUG: Record<ImportableDocumentType, string> = {
   CONSOLIDATED_POSITION: 'consolidated-position',
   MONTHLY_ACCOUNT: 'monthly-account',
   MONTHLY_FUND_STATEMENT: 'monthly-fund-statement',
+  PERIOD_RESULTS: 'period-results',
 }
 
 /**
@@ -73,6 +78,26 @@ export async function prepareImportPeriod(
       throw new ImportPeriodValidationError('Seleccionaste dos veces el mismo archivo.')
     }
     seenHashes.add(staged.sha256)
+    if (isXlsx(staged.bytes)) {
+      let parsed: ParsedPeriodResults
+      try {
+        parsed = parseBalanzPeriodResults(staged.bytes)
+      } catch (error) {
+        if (error instanceof PeriodResultsFormatError) throw new ImportPeriodValidationError(error.message)
+        throw new ImportPeriodValidationError(`No se reconoce el documento ${file.originalFileName}.`)
+      }
+      inputs.push({
+        originalFileName: fileSystem.basename(file.originalFileName),
+        stagedPath: staged.stagedPath,
+        sha256: staged.sha256,
+        extension: originalExtension(file.originalFileName),
+        kind: 'PERIOD_RESULTS',
+        text: '',
+        pdf: null,
+        results: parsed,
+      })
+      continue
+    }
     const pdf = isPdf(staged.bytes) ? await extractPdfDocument(staged.bytes) : null
     const text = pdf ? pdf.text : new TextDecoder('utf8').decode(staged.bytes)
     const detected = detectBalanzDocument(text)
@@ -90,6 +115,7 @@ export async function prepareImportPeriod(
       kind: detected,
       text,
       pdf,
+      results: null,
     })
   }
   return classify(inputs)
@@ -103,12 +129,17 @@ interface ParsedInput {
   kind: ImportableDocumentType
   text: string
   pdf: PdfTextDocument | null
+  results: ParsedPeriodResults | null
 }
 
 function classify(inputs: ParsedInput[]): PreparedImport {
   const accounts = inputs.filter((input) => input.kind === 'MONTHLY_ACCOUNT')
   const funds = inputs.filter((input) => input.kind === 'MONTHLY_FUND_STATEMENT')
   const positions = inputs.filter((input) => input.kind === 'CONSOLIDATED_POSITION')
+  const resultsInputs = inputs.filter((input) => input.kind === 'PERIOD_RESULTS')
+  if (resultsInputs.length > 1) {
+    throw new ImportPeriodValidationError('Seleccionaste más de un archivo de resultados del período.')
+  }
   if (accounts.length !== 1 || funds.length !== 1 || (positions.length !== 1 && positions.length !== 2)) {
     throw new ImportPeriodValidationError(
       'El período necesita el resumen mensual, el resumen de fondos y la posición de cierre.',
@@ -124,12 +155,12 @@ function classify(inputs: ParsedInput[]): PreparedImport {
   assertMonthlyAccountReadable(account)
   const fund = parseFund(fundInput)
   const consolidated = positions.map((input) => ({ input, position: parsePosition(input) }))
-  const closing = consolidated.find((item) => item.position.snapshotDate === account.period.endDate)
+  const closing = consolidated.find((item) => matchesPeriodClose(item.position.snapshotDate, account.period.endDate))
   const opening = consolidated.find((item) => item.position.snapshotDate < account.period.startDate)
   if (!closing || consolidated.length !== (opening ? 2 : 1)) {
     throw new ImportPeriodValidationError('Las posiciones no cierran el período del resumen mensual.')
   }
-  if (fund.reportDate !== closing.position.snapshotDate) {
+  if (fund.reportDate !== account.period.endDate && fund.reportDate !== closing.position.snapshotDate) {
     throw new ImportPeriodValidationError('El resumen de fondos no corresponde a la fecha de cierre.')
   }
 
@@ -138,6 +169,11 @@ function classify(inputs: ParsedInput[]): PreparedImport {
   const fundFile = prepared('fund-statement', 'closing', fundInput, fund.reportDate)
   const openingFile = opening
     ? prepared('opening-position', 'opening', opening.input, opening.position.snapshotDate)
+    : null
+  const resultsInput = resultsInputs[0]
+  const resultsParsed = resultsInput?.results
+  const resultsFile = resultsInput && resultsParsed
+    ? prepared('period-results', 'closing', resultsInput, account.period.endDate)
     : null
   const classifiedOpening = opening && openingFile
     ? {
@@ -153,7 +189,7 @@ function classify(inputs: ParsedInput[]): PreparedImport {
     : null
 
   return {
-    files: [openingFile, closingFile, accountFile, fundFile].filter((file): file is PreparedFile => file !== null),
+    files: [openingFile, closingFile, accountFile, fundFile, resultsFile].filter((file): file is PreparedFile => file !== null),
     opening: classifiedOpening,
     closing: {
       file: closingFile,
@@ -162,6 +198,7 @@ function classify(inputs: ParsedInput[]): PreparedImport {
         consolidatedPosition: closing.position,
         fundStatement: fund,
         snapshotDate: closing.position.snapshotDate,
+        statementDate: fund.reportDate,
         holdingCurrency: 'ARS',
       }),
     },
@@ -176,6 +213,7 @@ function classify(inputs: ParsedInput[]): PreparedImport {
     fund: { file: fundFile, parsed: fund },
     openingPeriod: opening ? yearMonth(opening.position.snapshotDate) : null,
     closingPeriod: yearMonth(account.period.endDate),
+    results: resultsFile && resultsParsed ? { file: resultsFile, parsed: resultsParsed } : null,
   }
 }
 
@@ -216,6 +254,10 @@ function parseFund(input: ParsedInput): ParsedMonthlyFundStatement {
 function yearMonth(isoDate: string): { year: number; month: number } {
   const [year, month] = isoDate.split('-')
   return { year: Number(year), month: Number(month) }
+}
+
+function isXlsx(bytes: Uint8Array): boolean {
+  return bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b
 }
 
 function isPdf(bytes: Uint8Array): boolean {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ImportConflictError, ImportPeriodParsingError, ImportPeriodValidationError } from '../import/importPeriodErrors'
 import { describeImportFailure } from './importFailure'
-import { importDialogReducer, importOutcomeCopy, initialImportDialogState } from './importDialogState'
+import { importDialogReducer, importDocumentChecklist, importOutcomeCopy, initialImportDialogState } from './importDialogState'
 import type { ImportPeriodResultView } from './importPeriodApplication'
 
 const files = [
@@ -49,7 +49,7 @@ describe('import dialog', () => {
     expect(importDialogReducer(importing, { type: 'fail', ...validation }).status).toBe('error')
 
     const conflict = describeImportFailure(new ImportConflictError('Ya hay otro documento para el snapshot 2026-08-31.'))
-    expect(conflict.headline).toBe('Ya existe una posición diferente para el 31/08/2026.')
+    expect(conflict.headline).toBe('Mismo período/fecha con información diferente')
 
     const parsing = describeImportFailure(new ImportPeriodParsingError(21))
     expect(parsing).toEqual({
@@ -79,6 +79,29 @@ describe('import dialog', () => {
     expect(importOutcomeCopy({ ...view('created', 'WARNING'), analysis: null }).lead).toBe(
       'Datos importados. Análisis pendiente.',
     )
+  })
+
+  it('muestra el Excel como opcional y no como un requisito faltante', () => {
+    const withoutExcel = importDocumentChecklist([
+      'CONSOLIDATED_POSITION',
+      'CONSOLIDATED_POSITION',
+      'MONTHLY_ACCOUNT',
+      'MONTHLY_FUND_STATEMENT',
+    ])
+    expect(withoutExcel.find((item) => item.label === 'Resultados del período')).toEqual({
+      label: 'Resultados del período',
+      present: false,
+      optional: true,
+    })
+    const withExcel = importDocumentChecklist([
+      'CONSOLIDATED_POSITION',
+      'CONSOLIDATED_POSITION',
+      'MONTHLY_ACCOUNT',
+      'MONTHLY_FUND_STATEMENT',
+      'PERIOD_RESULTS',
+    ])
+    expect(withExcel.find((item) => item.label === 'Resultados del período')?.present).toBe(true)
+    expect(withExcel.every((item) => item.present)).toBe(true)
   })
 })
 

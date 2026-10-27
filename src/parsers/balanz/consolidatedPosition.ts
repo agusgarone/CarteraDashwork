@@ -25,7 +25,7 @@ import {
 } from '../text/extractPdfText'
 
 const TITLE = /posici[oó]n consolidada/i
-const TICKER = /^[A-Z][A-Z0-9.]{1,14}$/
+const TICKER = /^[A-Z][A-Z0-9.]{0,14}$/
 const DATE_TOKEN = '(\\d{1,2}/\\d{1,2}/\\d{4})'
 
 type ScaledAmount = { value: Decimal; text: string }

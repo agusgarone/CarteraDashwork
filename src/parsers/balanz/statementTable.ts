@@ -17,6 +17,9 @@ export type StatementColumn =
   | 'fxRate'
 
 export interface StatementLine {
+  sourcePage?: number
+  sourceRow?: number
+  sourceY?: number
   description: string
   cells: Partial<Record<StatementColumn, string>>
 }
@@ -56,16 +59,16 @@ export function statementLinesFromPdf(document: PdfTextDocument): StatementLine[
     }
     if (!columns) {
       const description = row.items.map((item) => item.text).join(' ').trim()
-      if (description.length > 0) lines.push({ description, cells: { description } })
+      if (description.length > 0) lines.push({ description, cells: { description }, sourcePage: row.page, sourceRow: index + 1, sourceY: row.y })
       continue
     }
     const merged = mergeSplitRow(rows, index, columns)
     if (merged) {
-      lines.push(lineFromPositionedRow(merged.row, columns))
+      lines.push({ ...lineFromPositionedRow(merged.row, columns), sourcePage: row.page, sourceRow: index + 1, sourceY: row.y })
       index = merged.lastIndex
       continue
     }
-    lines.push(lineFromPositionedRow(row, columns))
+    lines.push({ ...lineFromPositionedRow(row, columns), sourcePage: row.page, sourceRow: index + 1, sourceY: row.y })
   }
 
   return lines
@@ -111,14 +114,14 @@ export function readCurrencySection(line: string): CurrencyCode | 'unknown' | nu
 }
 
 export function readInstrumentHeader(line: string): string | null {
-  const match = line.match(/-\s*([A-Z][A-Z0-9.]{1,14})\s*\/\s*\d+\s*$/)
+  const match = line.match(/-\s*([A-Z][A-Z0-9.]{0,14})\s*\/\s*\d+\s*$/)
   return match?.[1] ?? null
 }
 
 export function readMovementTicker(description: string): string | null {
-  const afterSlash = description.match(/\/\s*([A-Z][A-Z0-9.]{1,14})\s*$/)
+  const afterSlash = description.match(/\/\s*([A-Z][A-Z0-9.]{0,14})\s*$/)
   if (afterSlash?.[1]) return afterSlash[1]
-  const suffix = description.match(/\s-\s*([A-Z][A-Z0-9.]{1,14})\s*$/)
+  const suffix = description.match(/\s-\s*([A-Z][A-Z0-9.]{0,14})\s*$/)
   return suffix?.[1] ?? null
 }
 
