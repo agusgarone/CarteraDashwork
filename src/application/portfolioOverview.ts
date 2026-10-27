@@ -203,6 +203,7 @@ export async function loadPortfolioOverview(options: {
 
   const run = await reconciliations.getLatestByPeriod(selected.id)
   const performance = createPerformanceAnalysisService({
+    instruments,
     analysis: createPeriodAnalysisService({ periods, snapshots, transactions }),
     periods,
     snapshots,

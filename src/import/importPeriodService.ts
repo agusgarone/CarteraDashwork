@@ -1,3 +1,4 @@
+import { resolveOperationTicker } from '../parsers/balanz/operationTicker'
 import type { DatabaseClient } from '../database/client'
 import type { EntityId } from '../domain/common'
 import type { InstrumentCategory } from '../domain/instrument'
@@ -535,6 +536,7 @@ async function analyzeFromDatabase(db: DatabaseClient, periodId: EntityId): Prom
   const cashLegs = createCashMovementLegRepository(db)
   const fxEnrichments = createTransactionFxRepository(db)
   const service = createPerformanceAnalysisService({
+    instruments: createInstrumentRepository(db),
     analysis: createPeriodAnalysisService({ periods, snapshots, transactions }),
     periods,
     snapshots,
@@ -612,6 +614,10 @@ function transactionRow(
   ticker: string | null,
   instrumentRows: readonly ImportInstrumentRow[],
 ): ImportTransactionRow {
+  const explicitTicker = resolveOperationTicker({ description: movement.sourceReference ?? '' })
+  if (explicitTicker && ticker !== explicitTicker) {
+    throw new ImportPeriodValidationError(`El instrumento de la operación ${movement.sourceReference} no coincide con ${ticker ?? 'ninguno'}.`)
+  }
   return {
     instrumentKey: ticker ? instrumentKeyForTicker(ticker, instrumentRows) : null,
     documentKey: 'monthly-account',

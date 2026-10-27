@@ -81,6 +81,11 @@ export interface ParsedOperationLeg {
   date: string | null
   settlementDate: string | null
   rawDescription: string
+  sectionTicker?: string | null
+  explicitOperationTicker?: string | null
+  sourcePage?: number
+  sourceRow?: number
+  sourceY?: number
 }
 
 /**

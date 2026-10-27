@@ -1,3 +1,4 @@
+import { readExplicitOperationTicker, resolveOperationTicker } from './operationTicker'
 import Decimal from 'decimal.js'
 import type { CurrencyCode } from '../../domain/currency'
 import type { TransactionType } from '../../domain/transaction'
@@ -24,7 +25,6 @@ import {
   isRunningBalance,
   readCurrencySection,
   readInstrumentHeader,
-  readMovementTicker,
   statementLinesFromPdf,
   statementLinesFromText,
   type StatementLine,
@@ -34,7 +34,7 @@ const MONTHLY_ACCOUNT_TITLE = /resumen mensual comitente|cuenta corriente por co
 const PERIOD_RANGE =
   /(\d{1,2}[/.-]\d{1,2}[/.-]\d{4})\s*(?:al|a|-)\s*(\d{1,2}[/.-]\d{1,2}[/.-]\d{4})/i
 
-type MovementKind = TransactionType | 'STOCK_DIVIDEND' | 'KNOWN_NON_ECONOMIC'
+type MovementKind = TransactionType | 'STOCK_DIVIDEND' | 'KNOWN_NON_ECONOMIC' | 'PRIMARY_MARKET_CANDIDATE'
 
 interface AnnotatedLine extends StatementLine {
   currency: CurrencyCode | null
@@ -197,7 +197,7 @@ function normalizeLine(line: AnnotatedLine): {
 } {
   const warnings: ParserWarning[] = []
   const description = line.description
-  const kind = classify(description)
+  const kind = classifyMovement([line])
   if (kind === 'KNOWN_NON_ECONOMIC') {
     return { transaction: null, corporateAction: null, warnings }
   }
@@ -327,6 +327,7 @@ function classify(description: string): MovementKind | 'UNKNOWN' {
   if (/dividendo/.test(text)) return 'DIVIDEND'
   if (/recibo de cobro/.test(text)) return 'CONTRIBUTION'
   if (/comprobante de pago/.test(text)) return 'WITHDRAWAL'
+  if (/^boleto\s*\/\s*\d+\s*\/\s*licitaci[oó]n\s+mae\s*\//i.test(description)) return 'PRIMARY_MARKET_CANDIDATE'
   if (/\bcompra\b/.test(text)) return 'BUY'
   if (/\bventa\b/.test(text)) return 'SELL'
   return 'UNKNOWN'
@@ -376,7 +377,7 @@ function normalizeOperation(group: LineGroup): {
 } {
   const warnings: ParserWarning[] = []
   const description = preferredDescription(group)
-  const kind = classify(description)
+  const kind = classifyMovement(group.lines)
   if (kind === 'KNOWN_NON_ECONOMIC') {
     return { transaction: null, corporateAction: null, warnings }
   }
@@ -413,7 +414,7 @@ function normalizeOperation(group: LineGroup): {
     return { transaction: null, corporateAction: null, warnings }
   }
 
-  const ticker = fundMovement(kind) ? null : tradeLine ? instrumentOf(tradeLine) : first ? instrumentOf(first) : null
+  const ticker = fundMovement(kind) ? null : instrumentOfGroup(group)
   if ((kind === 'BUY' || kind === 'SELL' || kind === 'DIVIDEND') && !ticker) {
     warnings.push(warning('MISSING_TICKER', 'El movimiento no indica el instrumento.', description))
   }
@@ -520,25 +521,37 @@ function fundMovement(kind: MovementKind | 'UNKNOWN'): boolean {
 }
 
 function instrumentOf(line: AnnotatedLine): string | null {
-  if (/suscripci|rescate/i.test(line.description)) return null
-  return boletoTicker(line.description) ?? readMovementTicker(line.description) ?? line.sectionTicker
+  return resolveOperationTicker({ description: line.description, sectionTicker: line.sectionTicker })
 }
 
-function boletoTicker(description: string): string | null {
-  const match = description.match(/\/\s*([A-Z][A-Z0-9.]{1,14})\s*\/\s*(?:\$|u\$s|usd|mep|cable)\s*$/i)
-  return match?.[1]?.toUpperCase() ?? null
+function instrumentOfGroup(group: LineGroup): string | null {
+  const line = group.lines.find(row => row.sectionKind === 'INSTRUMENT') ?? group.lines[0]
+  if (!line) return null
+  return resolveOperationTicker({ description: line.description, sectionTicker: line.sectionTicker,
+    operationDescriptions: group.lines.map(row => row.description) })
+}
+function classifyMovement(lines: readonly AnnotatedLine[]): Exclude<MovementKind, 'PRIMARY_MARKET_CANDIDATE'> | 'UNKNOWN' {
+  const description = lines.find(line => line.sectionKind === 'INSTRUMENT')?.description ?? lines[0]?.description ?? ''
+  const kind = classify(description)
+  if (kind !== 'PRIMARY_MARKET_CANDIDATE') return kind
+  // Primary-market acquisition needs positive securities/price/gross and a cash debit.
+  const acquisition = lines.find(line => line.sectionKind === 'INSTRUMENT'
+    && readExplicitOperationTicker(line.description) !== null
+    && readNumber(line.cells.quantity)?.gt(0)
+    && readNumber(line.cells.price)?.gt(0)
+    && readNumber(line.cells.gross)?.gt(0)
+    && readNumber(line.cells.net)?.lt(0))
+  return acquisition ? 'BUY' : 'UNKNOWN'
 }
 
 function toOperationGroup(group: LineGroup): ParsedOperationGroup {
-  const description = preferredDescription(group)
-  const kind = classify(description)
+  const kind = classifyMovement(group.lines)
   const instrumentLine = group.lines.find((line) => line.sectionKind === 'INSTRUMENT')
   const dateLine = instrumentLine?.cells.tradeDate ? instrumentLine : group.lines.find((line) => line.cells.tradeDate)
-  const first = group.lines[0]
   return {
     operationReference: group.reference,
     operationType: kind === 'UNKNOWN' ? 'OTHER' : kind,
-    instrument: instrumentLine ? instrumentOf(instrumentLine) : first ? instrumentOf(first) : null,
+    instrument: instrumentOfGroup(group),
     date: dateLine?.cells.tradeDate ? parseBalanzDate(dateLine.cells.tradeDate) : null,
     settlementDate: dateLine?.cells.settlementDate ? parseBalanzDate(dateLine.cells.settlementDate) : null,
     legs: group.lines.map(toLeg),
@@ -575,6 +588,11 @@ function toLeg(line: AnnotatedLine): ParsedOperationLeg {
     date: line.cells.tradeDate ? parseBalanzDate(line.cells.tradeDate) : null,
     settlementDate: line.cells.settlementDate ? parseBalanzDate(line.cells.settlementDate) : null,
     rawDescription: line.description,
+    sectionTicker: line.sectionTicker,
+    explicitOperationTicker: readExplicitOperationTicker(line.description),
+    sourcePage: line.sourcePage,
+    sourceRow: line.sourceRow,
+    sourceY: line.sourceY,
   }
 }
 

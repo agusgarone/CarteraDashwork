@@ -200,6 +200,7 @@ export async function loadPortfolioDetail(options: {
   const openingAggregate = opening ? await snapshots.getAggregate(opening.id) : null
 
   const performance = createPerformanceAnalysisService({
+    instruments,
     analysis: createPeriodAnalysisService({ periods, snapshots, transactions }),
     periods,
     snapshots,

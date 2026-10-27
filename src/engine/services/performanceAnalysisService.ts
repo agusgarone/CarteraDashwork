@@ -1,3 +1,6 @@
+import { normalizeInstrumentIdentity } from '../../identity/normalizeInstrumentIdentity'
+import { instrumentRepository } from '../../repositories/instrumentRepository'
+import type { Instrument } from '../../domain/instrument'
 import type { EntityId } from '../../domain/common'
 import type { CorporateAction } from '../../domain/corporateAction'
 import type { PortfolioPeriod } from '../../domain/period'
@@ -29,6 +32,7 @@ import {
 } from './periodAnalysisService'
 
 export interface PerformanceAnalysisDependencies {
+  instruments?: { getAll(): Promise<Instrument[]> }
   analysis: Pick<PeriodAnalysisService, 'analyzePeriod'>
   periods: {
     getById(id: EntityId): Promise<PortfolioPeriod | null>
@@ -104,29 +108,41 @@ export function createPerformanceAnalysisService(
         transactions,
       })
 
+      const identity = dependencies.instruments ? normalizeInstrumentIdentity({
+        closingDate: closing.date, instruments: await dependencies.instruments.getAll(),
+        openingPositions: openingAggregate.positions, closingPositions: closingAggregate.positions,
+        transactions, corporateActions,
+      }) : null
+      const performance = reconcileExplicitPerformance({
+        expectedResult: base.investmentResult,
+        transactions: identity?.transactions ?? transactions,
+        openingPositions: identity?.openingPositions ?? openingAggregate.positions,
+        closingPositions: identity?.closingPositions ?? closingAggregate.positions,
+        corporateActions: identity?.corporateActions ?? corporateActions,
+        currency: closing.currency,
+        openingCashBalances: openingAggregate.cashBalances,
+        closingCashBalances: closingAggregate.cashBalances,
+        baseCurrency: closing.currency,
+        netContributions: base.netContributions,
+        cashLegs, fxRates,
+      })
       return {
-        base,
-        periodReturn,
-        performance: reconcileExplicitPerformance({
-          expectedResult: base.investmentResult,
-          transactions,
-          openingPositions: openingAggregate.positions,
-          closingPositions: closingAggregate.positions,
-          corporateActions,
-          currency: closing.currency,
-          openingCashBalances: openingAggregate.cashBalances,
-          closingCashBalances: closingAggregate.cashBalances,
-          baseCurrency: closing.currency,
-          netContributions: base.netContributions,
-          cashLegs,
-          fxRates,
-        }),
+        base, periodReturn, performance,
+        identityReconciliation: identity ? {
+          mappings: identity.mappings, appliedTransitions: identity.appliedTransitions,
+          quantities: identity.mappings.flatMap(mapping => {
+            const flow = performance.positionFlows.find(row => row.instrumentId === mapping.economicInstrumentId)
+            return flow ? [{ rawInstrumentId: mapping.rawInstrumentId, rawTicker: mapping.rawTicker,
+              economicInstrumentId: mapping.economicInstrumentId, status: flow.quantity.status, difference: flow.quantity.difference }] : []
+          }),
+        } : undefined,
       }
     },
   }
 }
 
 export const performanceAnalysisService = createPerformanceAnalysisService({
+  instruments: instrumentRepository,
   analysis: periodAnalysisService,
   periods: periodRepository,
   snapshots: snapshotRepository,
