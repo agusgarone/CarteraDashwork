@@ -15,6 +15,11 @@ export default defineConfig({
       '@': path.resolve(root, './src'),
     },
   },
+  build: {
+    rollupOptions: {
+      input: { main: path.resolve(root, 'index.html'), splash: path.resolve(root, 'splash.html') },
+    },
+  },
   server: {
     watch: {
       ignored: ['**/src-tauri/target/**'],

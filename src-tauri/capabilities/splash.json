@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "splash",
+  "description": "The splash can only receive the startup handoff event. No files or DB permissions.",
+  "windows": ["splash"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+}

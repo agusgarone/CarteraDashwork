@@ -1,3 +1,4 @@
+import { StartupReadySignal } from '@/startup/StartupReadySignal'
 import { AnalysisRangeProvider } from '@/analysis/AnalysisRangeProvider'
 import { DisplayCurrencyProvider } from '@/presentation/DisplayCurrencyProvider'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
@@ -14,6 +15,7 @@ export default function App() {
     <BrowserRouter>
       <ImportedPeriodProvider>
         <PortfolioOverviewProvider>
+          <StartupReadySignal />
           <AnalysisRangeProvider>
             <DisplayCurrencyProvider>
               <ImportDialogProvider>

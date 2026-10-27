@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>Analisis Cartera</title>
+    <style>
+      :root { color-scheme: dark; background: #101216; color: #f5f5f6; font-family: system-ui, sans-serif; }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; }
+      main { text-align: center; padding: 24px; }
+      img { width: 120px; height: 120px; object-fit: contain; animation: arrive 400ms ease-out both; }
+      h1 { margin: 18px 0 10px; font-size: 15px; font-weight: 600; letter-spacing: .18em; }
+      p { max-width: 320px; margin: 0 auto; color: #a6aab2; font-size: 12px; line-height: 1.6; }
+      button { margin-top: 16px; padding: 8px 14px; border: 1px solid #454b56; border-radius: 8px; background: #20242c; color: #f5f5f6; cursor: pointer; }
+      @keyframes arrive { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: scale(1); } }
+      @media (prefers-reduced-motion: reduce) { img { animation: none; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <img src="/src/assets/isotipo-MAG.png" alt="" width="120" height="120" />
+      <h1>ANALISIS CARTERA</h1>
+      <p id="status" role="status">Preparando tu cartera...</p>
+      <button id="recovery" type="button" hidden onclick="window.location.reload()">Abrir aplicación</button>
+      <noscript>No se pudo iniciar la interfaz. Cerrá y volvé a abrir la aplicación.</noscript>
+    </main>
+    <script>
+      // This intentionally uses Tauri's official global API, without Vite/React modules.
+      // The splash can render and show recovery text even if the app's JS fails to load.
+      const recovery = document.getElementById('recovery');
+      const status = document.getElementById('status');
+      function reportError() {
+        document.body.getAnimations().forEach(animation => animation.cancel());
+        document.body.style.opacity = '1';
+        status.textContent = 'No se pudo completar el inicio. Abrí la aplicación para revisar el error.';
+        recovery.hidden = false;
+      }
+      if (window.__TAURI__) {
+        const { invoke } = window.__TAURI__.core;
+        recovery.onclick = () => invoke('startup_show_main').catch(reportError);
+        window.__TAURI__.event.listen('startup-ready', async () => {
+          try {
+            const duration = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 120;
+            await document.body.animate([{ opacity: 1 }, { opacity: 0 }], { duration, fill: 'forwards' }).finished;
+            await invoke('startup_show_main');
+          } catch { reportError(); }
+        }).catch(reportError);
+      } else {
+        status.textContent = 'Esta pantalla pertenece a la aplicación de escritorio.';
+      }
+    </script>
+  </body>
+</html>

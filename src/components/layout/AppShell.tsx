@@ -1,3 +1,4 @@
+import brandMark from '@/assets/isotipo-MAG.png'
 import { DisplayCurrencySelector, DisplayCurrencyReference } from './DisplayCurrencySelector'
 import { NavLink, Outlet } from 'react-router-dom'
 import { Upload } from 'lucide-react'
@@ -33,10 +34,8 @@ export function AppShell() {
         <div className="mx-auto flex w-full max-w-[1440px] flex-wrap items-center gap-x-6 gap-y-3 px-6 py-3 lg:px-10">
           <div className="flex items-center gap-6">
             <div className="flex items-center gap-2.5">
-              <span className="flex size-7 items-center justify-center rounded-md bg-foreground text-[11px] font-semibold text-background">
-                P
-              </span>
-              <span className="text-sm font-semibold tracking-tight">Portfolio</span>
+              <img src={brandMark} alt="" width="40" height="40" className="size-10 object-contain" />
+              <span className="text-sm font-semibold tracking-tight">ANALISIS CARTERA</span>
             </div>
             <nav className="flex items-center gap-1">
               {links.map((link) => (

@@ -2,6 +2,7 @@ mod backup;
 mod db;
 mod health;
 mod sql_guard;
+mod startup;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -451,9 +452,26 @@ async fn bootstrap(config_dir: PathBuf, data_dir: PathBuf, identifier: String) -
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(startup::StartupState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                if window.label() == "main" {
+                    window.app_handle().exit(0);
+                } else if window.label() == "splash" {
+                    let main_visible = window.app_handle().get_webview_window("main")
+                        .and_then(|main| main.is_visible().ok()).unwrap_or(false);
+                    if !main_visible {
+                        window.app_handle().exit(0);
+                    }
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
+            startup::startup_backend_ready,
+            startup::startup_frontend_ready,
+            startup::startup_show_main,
             db_select,
             db_execute,
             db_transaction,
@@ -471,11 +489,23 @@ pub fn run() {
             commit_restore
         ])
         .setup(|app| {
-            let config_dir = app.path().app_config_dir()?;
-            let data_dir = app.path().app_data_dir()?;
-            let identifier = app.config().identifier.clone();
-            let state = block_on(bootstrap(config_dir, data_dir, identifier));
-            app.manage(state);
+            let handle = app.handle().clone();
+            startup::start_watchdog(handle.clone());
+            let task = tauri::async_runtime::spawn_blocking(move || {
+                block_on(async {
+                    let config_dir = handle.path().app_config_dir().map_err(|error| error.to_string())?;
+                    let data_dir = handle.path().app_data_dir().map_err(|error| error.to_string())?;
+                    let identifier = handle.config().identifier.clone();
+                    // The existing bootstrap, schema and error behavior remain unchanged.
+                    handle.manage(bootstrap(config_dir, data_dir, identifier).await);
+                    Ok(())
+                })
+            });
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let outcome = task.await.unwrap_or_else(|error| Err(format!("No se pudo completar el inicio: {error}")));
+                handle.state::<startup::StartupState>().backend_finished(outcome);
+            });
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
@@ -487,4 +517,39 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while building tauri application");
+}
+
+#[cfg(test)]
+mod startup_bootstrap_tests {
+    use super::*;
+
+    fn isolated_paths(label: &str) -> (PathBuf, PathBuf) {
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("cartera-startup-{label}-{}-{stamp}", std::process::id()));
+        (root.join("config"), root.join("data"))
+    }
+
+    #[tokio::test]
+    async fn startup_bootstrap_opens_sqlite_and_applies_existing_migrations() {
+        let (config, data) = isolated_paths("normal");
+        let state = bootstrap(config, data, APP_IDENTIFIER.into()).await;
+        let pool = state.pool().await.unwrap();
+        let versions: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migrations ORDER BY version").fetch_all(&pool).await.unwrap();
+        assert_eq!(versions, health::EXPECTED_MIGRATIONS);
+        assert!(state.inner.lock().await.startup_error.is_none());
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn startup_bootstrap_preserves_corrupt_file_and_reports_error() {
+        let (config, data) = isolated_paths("error");
+        std::fs::create_dir_all(&config).unwrap();
+        let path = config.join("cartera.db");
+        let original = b"intentionally invalid isolated startup fixture";
+        std::fs::write(&path, original).unwrap();
+        let state = bootstrap(config, data, APP_IDENTIFIER.into()).await;
+        assert!(state.pool().await.is_err());
+        assert!(state.inner.lock().await.startup_error.is_some());
+        assert_eq!(std::fs::read(path).unwrap(), original);
+    }
 }
