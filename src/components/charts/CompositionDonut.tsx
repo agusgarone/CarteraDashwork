@@ -1,8 +1,8 @@
+import { useDisplayCurrency } from '@/presentation/DisplayCurrencyProvider'
 import { Cell, Pie, PieChart, Tooltip } from 'recharts'
 import type { TooltipContentProps } from 'recharts'
 import type { AllocationItem } from '@/application/portfolioOverview'
-import { formatCurrencyARS } from '@/utils/formatCurrency'
-import Decimal from 'decimal.js'
+import { projectChartValues } from '@/presentation/displayMoney'
 import { formatShare } from '@/utils/formatPercentage'
 
 const COLORS: Record<string, string> = {
@@ -20,6 +20,7 @@ function colorOf(id: string) {
 }
 
 function DonutTooltip({ active, payload }: TooltipContentProps) {
+  const { format: formatMoney } = useDisplayCurrency()
   if (!active || !payload?.length) return null
   const item = payload[0]?.payload as (AllocationItem & { chartValue: number }) | undefined
   if (!item) return null
@@ -27,7 +28,7 @@ function DonutTooltip({ active, payload }: TooltipContentProps) {
     <div className="rounded-lg bg-popover px-3 py-2 text-xs shadow-sm ring-1 ring-foreground/10">
       <p className="font-medium">{item.label}</p>
       <p className="mt-1 tabular-nums text-muted-foreground">
-        {formatShare(item.weight)} · {formatCurrencyARS(item.marketValue)}
+        {formatShare(item.weight)} · {formatMoney(item.marketValue)}
       </p>
     </div>
   )
@@ -40,10 +41,9 @@ export function CompositionDonut({
   allocation: AllocationItem[]
   residual: string
 }) {
-  const data = allocation.map((item) => ({
-    ...item,
-    chartValue: new Decimal(item.marketValue).toNumber(),
-  }))
+  const display = useDisplayCurrency()
+  const { format: formatMoney } = display
+  const data = projectChartValues(allocation, item => item.marketValue, display)
   const residualVisible = /[1-9]/.test(residual)
 
   return (
@@ -81,7 +81,7 @@ export function CompositionDonut({
               <span className="text-right">
                 <span className="block text-sm font-medium tabular-nums">{formatShare(item.weight)}</span>
                 <span className="block text-xs tabular-nums text-muted-foreground">
-                  {formatCurrencyARS(item.marketValue)}
+                  {formatMoney(item.marketValue)}
                 </span>
               </span>
             </li>
@@ -91,7 +91,7 @@ export function CompositionDonut({
       {residualVisible ? (
         <p className="text-xs leading-relaxed text-muted-foreground">
           La suma de las tenencias no coincide exactamente con el patrimonio informado. Diferencia:{' '}
-          {formatCurrencyARS(residual)}.
+          <span title={display.precise(residual)}>{formatMoney(residual)}</span>.
         </p>
       ) : null}
     </div>

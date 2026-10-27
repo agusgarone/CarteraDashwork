@@ -1,3 +1,4 @@
+import { useDisplayCurrency } from '@/presentation/DisplayCurrencyProvider'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -12,7 +13,6 @@ import {
 import { useImportDialog } from '@/components/import/ImportDialogProvider'
 import { SignedDecimal } from '@/components/shared/SignedDecimal'
 import type { OverviewMonth } from '@/application/portfolioOverview'
-import { formatCurrencyARS } from '@/utils/formatCurrency'
 
 export function MonthHistory({
   months,
@@ -23,6 +23,8 @@ export function MonthHistory({
   selectedId: string
   onSelect: (periodId: string) => void
 }) {
+  const display = useDisplayCurrency()
+  const { format: formatMoney } = display
   const { setOpen } = useImportDialog()
 
   return (
@@ -54,7 +56,7 @@ export function MonthHistory({
                   <Badge variant="secondary">Completo</Badge>
                 </TableCell>
                 <TableCell className="text-right tabular-nums">
-                  {month.closingValue === null ? '—' : formatCurrencyARS(month.closingValue)}
+                  {month.closingValue === null ? '—' : formatMoney(month.closingValue)}
                 </TableCell>
                 <TableCell className="text-right">
                   {month.netContributions === null ? '—' : <SignedDecimal value={month.netContributions} />}

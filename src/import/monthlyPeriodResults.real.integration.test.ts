@@ -1,3 +1,7 @@
+import { createHash } from 'node:crypto'
+import { createPeriodFxReferenceService } from '../services/periodFxReferenceService'
+import { createDocumentRepository } from '../repositories/documentRepository'
+import { createPortfolioRepository } from '../repositories/portfolioRepository'
 import { readExplicitOperationTicker } from '../parsers/balanz/operationTicker'
 import { createPerformanceAnalysisService } from '../engine/services/performanceAnalysisService'
 import { createPeriodAnalysisService } from '../engine/services/periodAnalysisService'
@@ -136,6 +140,25 @@ describe('Excel real como enrichment de meses ya importados', () => {
     try {
       const options = { db: database.client, appDataDir, files: createNodeImportFiles(), paths }
       const before = await importSelectedDocuments(options)
+      const fxService = createPeriodFxReferenceService({
+        periods: createPeriodRepository(database.client), portfolios: createPortfolioRepository(database.client),
+        snapshots: createSnapshotRepository(database.client), documents: createDocumentRepository(database.client),
+      })
+      const changesBeforeReference = await database.client.select('SELECT total_changes() AS changes')
+      const usdReference = await fxService.getPeriodUsdMepReference(before.period.id)
+      expect(await database.client.select('SELECT total_changes() AS changes')).toEqual(changesBeforeReference)
+      const closingBytes = new Uint8Array(await readFile(fixture.closing))
+      const closingPdf = parseBalanzConsolidatedPositionDocument(await extractPdfDocument(closingBytes))
+      expect(usdReference.status).toBe('AVAILABLE')
+      if (usdReference.status !== 'AVAILABLE') throw new Error(`Falta USD MEP para ${folder}: ${usdReference.reason}`)
+      expect(usdReference.rate).toBe(closingPdf.cashBalances.find(row => row.currency === 'USD_MEP')?.fxRate)
+      expect(usdReference.date).toBe(closingPdf.snapshotDate)
+      expect(usdReference.source).toMatchObject({ kind: 'EXPLICIT_SNAPSHOT_RATE', originalFilename: path.basename(fixture.closing),
+        sha256: createHash('sha256').update(closingBytes).digest('hex'), field: 'cash_balances.fx_rate' })
+      if (fixture.month === 1) expect(usdReference.date).toBe('2026-01-30')
+      if (fixture.month === 7) expect(usdReference).toMatchObject({ rate: '1518.19', date: '2026-07-31' })
+      if (fixture.month === 8) expect(usdReference).toMatchObject({ rate: '1534.51', date: '2026-08-31' })
+      expect(await database.client.select('SELECT * FROM snapshots WHERE id = $1', [usdReference.snapshotId])).toHaveLength(1)
       const snapshots = await database.client.select('SELECT * FROM snapshots ORDER BY id')
       const transactions = await database.client.select('SELECT * FROM transactions ORDER BY id')
       const documentsBefore = await database.client.select<{ count: number }>('SELECT COUNT(*) AS count FROM documents')
@@ -151,6 +174,7 @@ describe('Excel real como enrichment de meses ya importados', () => {
       const saved = await counts(database.client)
       expect((await importSelectedDocuments({ ...options, paths: [...paths, fixture.excel] })).outcome).toBe('existing')
       expect(await counts(database.client)).toEqual(saved)
+      expect(await fxService.getPeriodUsdMepReference(before.period.id)).toEqual(usdReference)
       const fresh = openMemoryDatabase()
       try {
         const firstWithExcel = await importSelectedDocuments({
@@ -173,6 +197,8 @@ describe('Excel real como enrichment de meses ya importados', () => {
       expect(inspection.ledger.status).toBe('RECONCILED')
       individualReport[folder] = {
         inspection,
+        usdReference,
+        periodEnd: parsed.closingDate,
         result: enriched.analysis?.expectedResult, dietz: enriched.periodReturnLabel,
         cashLedgerReconciled: enriched.cashLedgerReconciled, partial: enriched.positionAttributionPartial,
         counts: saved[0], workbook: { opening: parsed.openingDate, closing: parsed.closingDate, selections: parsed.selections.length },
@@ -191,12 +217,18 @@ describe('recorrido Enero a Agosto en una misma base', () => {
     try {
       const base = { db: database.client, appDataDir, files: createNodeImportFiles() }
       const results = new Map<number, string | undefined>()
+      const periodIds = new Map<number, string>()
+      const fxService = createPeriodFxReferenceService({
+        periods: createPeriodRepository(database.client), portfolios: createPortfolioRepository(database.client),
+        snapshots: createSnapshotRepository(database.client), documents: createDocumentRepository(database.client),
+      })
       for (const fixture of loaded) {
         const paths = [fixture.closing, fixture.account, fixture.fund]
         if (fixture.month === 1) paths.unshift(fixture.opening)
         const view = await importSelectedDocuments({ ...base, paths })
         expect(view.period.month).toBe(fixture.month)
         results.set(fixture.month, view.analysis?.expectedResult)
+        periodIds.set(fixture.month, view.period.id)
       }
       expect(await database.client.select('SELECT COUNT(*) AS count FROM snapshots')).toEqual([{ count: 9 }])
       expect(await database.client.select('SELECT COUNT(*) AS count FROM documents')).toEqual([{ count: 25 }])
@@ -214,6 +246,11 @@ describe('recorrido Enero a Agosto en una misma base', () => {
       }
       expect(await counts(database.client)).toEqual(saved)
       expect(await database.client.select('SELECT date FROM snapshots GROUP BY date HAVING COUNT(*) > 1')).toEqual([])
+      for (const fixture of loaded) {
+        const reference = await fxService.getPeriodUsdMepReference(periodIds.get(fixture.month)!)
+        const expected = individualReport[fixture.folder] as { usdReference: { rate: string; date: string } }
+        expect(reference).toMatchObject({ status: 'AVAILABLE', rate: expected.usdReference.rate, date: expected.usdReference.date })
+      }
     } finally { database.close() }
   }, 180_000)
 })

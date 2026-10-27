@@ -1,3 +1,4 @@
+import { useDisplayCurrency } from '@/presentation/DisplayCurrencyProvider'
 import { cn } from 'cn'
 import { SignedDecimal } from '@/components/shared/SignedDecimal'
 import {
@@ -9,7 +10,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import type { InstrumentDetail } from '@/application/portfolioDetail'
-import { formatCurrencyARS, formatQuantity } from '@/utils/formatCurrency'
+import { formatQuantity } from '@/utils/formatCurrency'
 
 export function InstrumentTable({
   instruments,
@@ -20,6 +21,8 @@ export function InstrumentTable({
   selectedId: string | null
   onSelect: (instrumentId: string) => void
 }) {
+  const display = useDisplayCurrency()
+  const { format: formatMoney } = display
   return (
     <Table>
       <TableHeader>
@@ -57,10 +60,10 @@ export function InstrumentTable({
                 {instrument.quantity ? formatQuantity(instrument.quantity) : '—'}
               </TableCell>
               <TableCell className="text-right tabular-nums">
-                {instrument.currentValue ? formatCurrencyARS(instrument.currentValue) : '—'}
+                {instrument.currentValue ? formatMoney(instrument.currentValue) : '—'}
               </TableCell>
               <TableCell className="text-right tabular-nums">
-                {instrument.openingValue ? formatCurrencyARS(instrument.openingValue) : '—'}
+                {instrument.openingValue ? formatMoney(instrument.openingValue) : '—'}
               </TableCell>
               <TableCell className="text-right">
                 {instrument.valuationChange ? <SignedDecimal value={instrument.valuationChange} /> : '—'}

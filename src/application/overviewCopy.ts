@@ -12,12 +12,13 @@ export function reconciliationNote(
   difference: string | null,
   attribution: 'AVAILABLE' | 'PENDING' | null = null,
   positionAttribution: 'PARTIAL' | null = null,
+  formatMoney: (value: string) => string = formatCurrencyARS,
 ): string | null {
   if (positionAttribution === 'PARTIAL' && status === null) return PARTIAL_ATTRIBUTION_NOTE
   if (attribution === 'PENDING' && status === null) return CASH_LEDGER_RECONCILED_NOTE
   if (status === 'RECONCILED') return null
   if (status === 'WARNING' && difference !== null) {
-    return `Diferencia pendiente: ${formatCurrencyARS(difference)}`
+    return `Diferencia pendiente: ${formatMoney(difference)}`
   }
   if (status === 'FAILED') {
     return 'Los datos se importaron correctamente. Este período contiene operaciones que todavía no pueden reconciliarse automáticamente.'

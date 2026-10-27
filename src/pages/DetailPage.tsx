@@ -18,9 +18,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { formatCurrencyARS } from '@/utils/formatCurrency'
+import { useDisplayCurrency } from '@/presentation/DisplayCurrencyProvider'
 
 export function DetailPage() {
+  const display = useDisplayCurrency()
+  const { format: formatMoney } = display
+  const money = (value: string | null) => value === null ? '—' : formatMoney(value)
   const { screen, retry } = usePortfolioDetail()
   const { setOpen } = useImportDialog()
   const [categoryId, setCategoryId] = useState('ALL')
@@ -37,6 +40,7 @@ export function DetailPage() {
   }
 
   if (screen.status === 'loading') return <DetailSkeleton />
+  if (screen.status === 'ready' && display.requestedCurrency === 'USD' && (display.loading || display.periodId !== screen.view.period.id)) return <DetailSkeleton />
   if (screen.status === 'error') {
     return (
       <ScreenMessage
@@ -97,7 +101,7 @@ export function DetailPage() {
           {categoryId === 'ALL' ? (
             <>
               <Metric label="Valor de inversiones" value={money(view.totals.investmentValue)} />
-              <Metric label="Patrimonio total" value={formatCurrencyARS(view.totals.portfolioValue)} />
+              <Metric label="Patrimonio total" value={formatMoney(view.totals.portfolioValue)} />
               <Metric label="Variación de valuación" value={signed(view.totals.valuationChange)} />
               <Metric label="Posiciones" value={String(view.instruments.length)} />
             </>
@@ -162,9 +166,6 @@ export function DetailPage() {
   )
 }
 
-function money(value: string | null) {
-  return value ? formatCurrencyARS(value) : '—'
-}
 
 function signed(value: string | null) {
   return value ? <SignedDecimal value={value} className="text-xl font-semibold tracking-tight" /> : '—'

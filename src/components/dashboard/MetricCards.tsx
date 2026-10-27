@@ -1,15 +1,17 @@
+import { useDisplayCurrency } from '@/presentation/DisplayCurrencyProvider'
 import { cn } from 'cn'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { SignedDecimal } from '@/components/shared/SignedDecimal'
 import { reconciliationNote } from '@/application/overviewCopy'
 import type { PortfolioOverviewView } from '@/application/portfolioOverview'
-import { formatCurrencyARS } from '@/utils/formatCurrency'
 import { formatReturnPercent } from '@/utils/formatPercentage'
 
 const DIETZ_NOTE =
   'Calculado mediante Modified Dietz, teniendo en cuenta el momento de los aportes y retiros.'
 
 export function MetricCards({ overview }: { overview: PortfolioOverviewView }) {
+  const display = useDisplayCurrency()
+  const { format: formatMoney } = display
   const { metrics } = overview
   const negative =
     metrics.investmentResult !== null &&
@@ -20,6 +22,7 @@ export function MetricCards({ overview }: { overview: PortfolioOverviewView }) {
     metrics.unexplainedDifference,
     metrics.performanceAttribution,
     metrics.positionAttribution,
+    formatMoney,
   )
 
   return (
@@ -28,7 +31,7 @@ export function MetricCards({ overview }: { overview: PortfolioOverviewView }) {
         <CardHeader>
           <p className="text-sm text-muted-foreground">Patrimonio actual</p>
           <CardTitle className="text-3xl font-semibold tracking-tight tabular-nums">
-            {formatCurrencyARS(metrics.currentPortfolioValue)}
+            {formatMoney(metrics.currentPortfolioValue)}
           </CardTitle>
         </CardHeader>
         <CardContent>

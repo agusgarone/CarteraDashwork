@@ -1,15 +1,12 @@
-import Decimal from 'decimal.js'
+import { useDisplayCurrency } from '@/presentation/DisplayCurrencyProvider'
+import { projectChartValues, formatDisplayAxis } from '@/presentation/displayMoney'
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import type { TooltipContentProps } from 'recharts'
-import { formatCurrencyARS } from '@/utils/formatCurrency'
 import type { PortfolioEvolutionPoint } from '@/application/portfolioOverview'
 
-function formatAxis(value: number) {
-  const millions = value / 1_000_000
-  return `$${millions.toLocaleString('es-AR', { maximumFractionDigits: 1 })} M`
-}
 
 function EvolutionTooltip({ active, payload, label }: TooltipContentProps) {
+  const { format: formatMoney } = useDisplayCurrency()
   if (!active || !payload?.length) return null
   const point = payload[0]?.payload as { label: string; portfolioValue: string } | undefined
   if (!point) return null
@@ -19,17 +16,15 @@ function EvolutionTooltip({ active, payload, label }: TooltipContentProps) {
       <p className="mb-1.5 font-medium text-foreground">{label}</p>
       <p className="flex items-center justify-between gap-6">
         <span className="text-muted-foreground">Patrimonio</span>
-        <span className="tabular-nums">{formatCurrencyARS(point.portfolioValue)}</span>
+        <span className="tabular-nums">{formatMoney(point.portfolioValue)}</span>
       </p>
     </div>
   )
 }
 
 export function PortfolioEvolutionChart({ points }: { points: PortfolioEvolutionPoint[] }) {
-  const data = points.map((point) => ({
-    ...point,
-    chartValue: new Decimal(point.portfolioValue).toNumber(),
-  }))
+  const display = useDisplayCurrency()
+  const data = projectChartValues(points, point => point.portfolioValue, display)
 
   return (
     <div className="h-[340px] w-full min-w-0">
@@ -44,10 +39,10 @@ export function PortfolioEvolutionChart({ points }: { points: PortfolioEvolution
             dy={8}
           />
           <YAxis
-            tickFormatter={formatAxis}
+            tickFormatter={(value: number) => formatDisplayAxis(value, display.currency)}
             tickLine={false}
             axisLine={false}
-            width={72}
+            width={96}
             tick={{ fill: 'oklch(0.55 0 0)', fontSize: 12 }}
             domain={['auto', 'auto']}
           />

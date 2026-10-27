@@ -1,9 +1,9 @@
+import { useDisplayCurrency } from '@/presentation/DisplayCurrencyProvider'
 import { Check } from 'lucide-react'
 import { SignedDecimal } from '@/components/shared/SignedDecimal'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { reconciliationNote } from '@/application/overviewCopy'
 import type { PortfolioOverviewView } from '@/application/portfolioOverview'
-import { formatCurrencyARS } from '@/utils/formatCurrency'
 
 function Row({ label, value, emphasize = false }: { label: string; value: string; emphasize?: boolean }) {
   return (
@@ -15,12 +15,15 @@ function Row({ label, value, emphasize = false }: { label: string; value: string
 }
 
 export function PeriodSummaryCard({ overview }: { overview: PortfolioOverviewView }) {
+  const display = useDisplayCurrency()
+  const { format: formatMoney } = display
   const { metrics, importStatus } = overview
   const note = reconciliationNote(
     importStatus.reconciliationStatus,
     importStatus.unexplainedDifference,
     importStatus.performanceAttribution,
     importStatus.positionAttribution,
+    formatMoney,
   )
 
   return (
@@ -32,7 +35,7 @@ export function PeriodSummaryCard({ overview }: { overview: PortfolioOverviewVie
       <CardContent className="flex flex-col gap-3 text-sm">
         <Row
           label="Inicio del período"
-          value={metrics.openingPortfolioValue ? formatCurrencyARS(metrics.openingPortfolioValue) : '—'}
+          value={metrics.openingPortfolioValue ? formatMoney(metrics.openingPortfolioValue) : '—'}
         />
         <Flow label="Aportes" value={metrics.contributions} />
         <Flow label="Retiros" value={metrics.withdrawals ? negate(metrics.withdrawals) : null} />
@@ -40,7 +43,7 @@ export function PeriodSummaryCard({ overview }: { overview: PortfolioOverviewVie
         <Flow label="Aporte neto" value={metrics.netContributions} emphasize />
         <Flow label="Generado por inversiones" value={metrics.investmentResult} emphasize />
         <div className="my-1 border-t border-border" />
-        <Row label="Final del período" value={formatCurrencyARS(metrics.currentPortfolioValue)} emphasize />
+        <Row label="Final del período" value={formatMoney(metrics.currentPortfolioValue)} emphasize />
         {note ? <p className="text-xs leading-relaxed text-muted-foreground">{note}</p> : null}
         <ul className="space-y-1.5 pt-1">
           {importStatus.documents.map((document) => (

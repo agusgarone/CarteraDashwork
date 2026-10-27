@@ -1,3 +1,4 @@
+import { DisplayCurrencySelector, DisplayCurrencyReference } from './DisplayCurrencySelector'
 import { NavLink, Outlet } from 'react-router-dom'
 import { Upload } from 'lucide-react'
 import { cn } from 'cn'
@@ -58,6 +59,7 @@ export function AppShell() {
 
           <div className="ml-auto flex flex-wrap items-center gap-3">
             <HomePeriodSelector />
+            <DisplayCurrencySelector />
             <p className="text-xs text-muted-foreground">
               Última carga: <span className="text-foreground">{lastLoad}</span>
             </p>
@@ -71,6 +73,7 @@ export function AppShell() {
 
       <main className="mx-auto w-full max-w-[1440px] px-6 py-8 lg:px-10">
         <AppHealthBanner />
+        <DisplayCurrencyReference />
         <Outlet />
       </main>
       <ImportMonthDialog />

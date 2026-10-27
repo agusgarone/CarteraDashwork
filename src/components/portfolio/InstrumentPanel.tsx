@@ -1,10 +1,11 @@
+import { useDisplayCurrency } from '@/presentation/DisplayCurrencyProvider'
 import type { ReactNode } from 'react'
 import { X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { SignedDecimal } from '@/components/shared/SignedDecimal'
 import type { CurrencyCode } from '@/domain/currency'
 import type { InstrumentDetail } from '@/application/portfolioDetail'
-import { formatCurrencyARS, formatDecimal, formatQuantity } from '@/utils/formatCurrency'
+import { formatDecimal, formatQuantity } from '@/utils/formatCurrency'
 import { formatDate } from '@/utils/formatDate'
 
 function Fact({ label, children }: { label: string; children: ReactNode }) {
@@ -29,6 +30,8 @@ export function InstrumentPanel({
   instrument: InstrumentDetail
   onClose: () => void
 }) {
+  const display = useDisplayCurrency()
+  const { format: formatMoney } = display
   return (
     <aside className="rounded-xl bg-card p-5 ring-1 ring-foreground/10">
       <div className="flex items-start justify-between gap-3">
@@ -42,10 +45,10 @@ export function InstrumentPanel({
       </div>
 
       <div className="mt-5 grid grid-cols-2 gap-4">
-        <Fact label="Valor actual">{instrument.currentValue ? formatCurrencyARS(instrument.currentValue) : '—'}</Fact>
+        <Fact label="Valor actual">{instrument.currentValue ? formatMoney(instrument.currentValue) : '—'}</Fact>
         <Fact label="Cantidad">{instrument.quantity ? formatQuantity(instrument.quantity) : '—'}</Fact>
         <Fact label="Valor de apertura">
-          {instrument.openingValue ? formatCurrencyARS(instrument.openingValue) : '—'}
+          {instrument.openingValue ? formatMoney(instrument.openingValue) : '—'}
         </Fact>
         <Fact label="Variación de valuación">
           {instrument.valuationChange ? <SignedDecimal value={instrument.valuationChange} /> : '—'}
@@ -60,10 +63,10 @@ export function InstrumentPanel({
             {instrument.flowNote ? null : (
               <>
                 <Fact label="Compras y suscripciones">
-                  {instrument.acquisitionFlows ? formatCurrencyARS(instrument.acquisitionFlows) : '—'}
+                  {instrument.acquisitionFlows ? formatMoney(instrument.acquisitionFlows) : '—'}
                 </Fact>
                 <Fact label="Ventas y rescates">
-                  {instrument.disposalFlows ? formatCurrencyARS(instrument.disposalFlows) : '—'}
+                  {instrument.disposalFlows ? formatMoney(instrument.disposalFlows) : '—'}
                 </Fact>
               </>
             )}
@@ -105,8 +108,9 @@ export function InstrumentPanel({
         )}
       </div>
 
-      <div className="mt-6 border-t border-border pt-5">
-        <h3 className="text-sm font-medium">Movimientos del período</h3>
+      <details className="mt-6 border-t border-border pt-5">
+        <summary className="cursor-pointer text-sm font-medium">Movimientos originales · datos del documento</summary>
+        <p className="mt-2 text-xs text-muted-foreground">Importes en su moneda original; no son valores convertidos de presentación.</p>
         {instrument.movements.length === 0 ? (
           <p className="mt-3 text-sm text-muted-foreground">No hay movimientos de este instrumento en el período.</p>
         ) : (
@@ -123,7 +127,7 @@ export function InstrumentPanel({
             ))}
           </ul>
         )}
-      </div>
+      </details>
     </aside>
   )
 }

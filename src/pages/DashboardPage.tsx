@@ -1,3 +1,4 @@
+import { useDisplayCurrency } from '@/presentation/DisplayCurrencyProvider'
 import { PortfolioEvolutionChart } from '@/components/charts/PortfolioEvolutionChart'
 import { CompositionCard } from '@/components/dashboard/CompositionCard'
 import { MetricCards } from '@/components/dashboard/MetricCards'
@@ -12,11 +13,13 @@ import { usePortfolioOverview } from '@/application/PortfolioOverviewProvider'
 import { useImportedPeriod } from '@/application/ImportedPeriodProvider'
 
 export function DashboardPage() {
+  const display = useDisplayCurrency()
   const { screen, retry } = usePortfolioOverview()
   const { selectImportedPeriod } = useImportedPeriod()
   const { setOpen } = useImportDialog()
 
   if (screen.status === 'loading') return <OverviewSkeleton />
+  if (screen.status === 'ready' && display.requestedCurrency === 'USD' && (display.loading || display.periodId !== screen.view.period.id)) return <OverviewSkeleton />
   if (screen.status === 'error') {
     return (
       <ScreenMessage

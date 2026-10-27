@@ -232,7 +232,7 @@ function ImportResult({ result }: { result: ImportPeriodResultView }) {
         </li>
       </ul>
       {result.analysis ? (
-        <dl className="mt-4 space-y-1 text-sm">
+        <dl className="mt-4 space-y-1 text-sm"><dt className="mb-2 text-xs text-muted-foreground">Valores originales de importación · ARS</dt>
           <div className="flex justify-between gap-4">
             <dt className="text-muted-foreground">Resultado de inversiones</dt>
             <dd>{formatCurrencyARS(result.analysis.expectedResult)}</dd>
