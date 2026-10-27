@@ -1,3 +1,4 @@
+import { validateRealRanges } from './validateRealRanges'
 import { createHash } from 'node:crypto'
 import { createPeriodFxReferenceService } from '../services/periodFxReferenceService'
 import { createDocumentRepository } from '../repositories/documentRepository'
@@ -251,6 +252,7 @@ describe('recorrido Enero a Agosto en una misma base', () => {
         const expected = individualReport[fixture.folder] as { usdReference: { rate: string; date: string } }
         expect(reference).toMatchObject({ status: 'AVAILABLE', rate: expected.usdReference.rate, date: expected.usdReference.date })
       }
+      await validateRealRanges(database.client, periodIds, root)
     } finally { database.close() }
   }, 180_000)
 })

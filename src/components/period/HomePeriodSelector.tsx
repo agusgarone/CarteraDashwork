@@ -1,14 +1,17 @@
 import { cn } from 'cn'
+import { useAnalysisRange } from '@/analysis/AnalysisRangeProvider'
+import { rangePeriodLabel } from '@/analysis/analysisRange'
 import { useImportedPeriod } from '@/application/ImportedPeriodProvider'
 import { usePortfolioOverview } from '@/application/PortfolioOverviewProvider'
 
-const lockedPresets = ['3M', '6M', 'YTD', '1A', 'Personalizado']
+
 
 export function HomePeriodSelector() {
   const { screen } = usePortfolioOverview()
-  const { selectImportedPeriod } = useImportedPeriod()
-  const periods = screen.status === 'ready' ? screen.view.availablePeriods : []
-  const selectedId = screen.status === 'ready' ? screen.view.period.id : ''
+  const { period: selected, selectImportedPeriod } = useImportedPeriod()
+  const range = useAnalysisRange()
+  const periods = screen.status === 'ready' ? screen.view.availablePeriods : range.catalog
+  const selectedId = selected?.id ?? (screen.status === 'ready' ? screen.view.period.id : '')
   const latest = periods[periods.length - 1]
 
   function choose(id: string) {
@@ -30,19 +33,8 @@ export function HomePeriodSelector() {
       >
         Ahora
       </button>
-      {lockedPresets.map((label) => (
-        <button
-          key={label}
-          type="button"
-          disabled
-          title="Este rango se habilita cuando haya más meses importados."
-          className="h-7 rounded-md px-2.5 text-xs font-medium text-muted-foreground opacity-50"
-        >
-          {label}
-        </button>
-      ))}
       <select
-        aria-label="Período mensual"
+        aria-label="Período final"
         value={selectedId}
         disabled={periods.length === 0}
         onChange={(event) => choose(event.target.value)}
@@ -51,7 +43,7 @@ export function HomePeriodSelector() {
         {periods.length === 0 ? <option value="">Sin meses</option> : null}
         {periods.map((period) => (
           <option key={period.id} value={period.id}>
-            {period.label}
+            {rangePeriodLabel(period)}
           </option>
         ))}
       </select>

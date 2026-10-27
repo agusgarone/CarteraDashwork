@@ -1,3 +1,4 @@
+import { AnalysisRangeProvider } from '@/analysis/AnalysisRangeProvider'
 import { DisplayCurrencyProvider } from '@/presentation/DisplayCurrencyProvider'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { ImportedPeriodProvider } from '@/application/ImportedPeriodProvider'
@@ -13,18 +14,20 @@ export default function App() {
     <BrowserRouter>
       <ImportedPeriodProvider>
         <PortfolioOverviewProvider>
-          <DisplayCurrencyProvider>
-            <ImportDialogProvider>
-              <Routes>
-                <Route element={<AppShell />}>
-                  <Route index element={<DashboardPage />} />
-                  <Route path="detalle" element={<DetailPage />} />
-                  <Route path="datos" element={<DataPage />} />
-                  <Route path="*" element={<Navigate to="/" replace />} />
-                </Route>
-              </Routes>
-            </ImportDialogProvider>
-          </DisplayCurrencyProvider>
+          <AnalysisRangeProvider>
+            <DisplayCurrencyProvider>
+              <ImportDialogProvider>
+                <Routes>
+                  <Route element={<AppShell />}>
+                    <Route index element={<DashboardPage />} />
+                    <Route path="detalle" element={<DetailPage />} />
+                    <Route path="datos" element={<DataPage />} />
+                    <Route path="*" element={<Navigate to="/" replace />} />
+                  </Route>
+                </Routes>
+              </ImportDialogProvider>
+            </DisplayCurrencyProvider>
+          </AnalysisRangeProvider>
         </PortfolioOverviewProvider>
       </ImportedPeriodProvider>
     </BrowserRouter>

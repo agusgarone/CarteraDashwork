@@ -1,3 +1,6 @@
+import { useAnalysisRange } from '@/analysis/AnalysisRangeProvider'
+import { AnalysisRangeSelector } from '@/components/period/AnalysisRangeSelector'
+import { RangeDashboard } from '@/components/dashboard/RangeDashboard'
 import { useDisplayCurrency } from '@/presentation/DisplayCurrencyProvider'
 import { PortfolioEvolutionChart } from '@/components/charts/PortfolioEvolutionChart'
 import { CompositionCard } from '@/components/dashboard/CompositionCard'
@@ -13,12 +16,16 @@ import { usePortfolioOverview } from '@/application/PortfolioOverviewProvider'
 import { useImportedPeriod } from '@/application/ImportedPeriodProvider'
 
 export function DashboardPage() {
+  const range = useAnalysisRange()
   const display = useDisplayCurrency()
   const { screen, retry } = usePortfolioOverview()
-  const { selectImportedPeriod } = useImportedPeriod()
+  const { period: selectedPeriod, selectImportedPeriod } = useImportedPeriod()
   const { setOpen } = useImportDialog()
 
+  if (range.showRange) return <RangeDashboard result={range.result} loading={range.loading} error={range.error} controls={<AnalysisRangeSelector />} />
+
   if (screen.status === 'loading') return <OverviewSkeleton />
+  if (screen.status === 'ready' && selectedPeriod && selectedPeriod.id !== screen.view.period.id) return <OverviewSkeleton />
   if (screen.status === 'ready' && display.requestedCurrency === 'USD' && (display.loading || display.periodId !== screen.view.period.id)) return <OverviewSkeleton />
   if (screen.status === 'error') {
     return (
@@ -50,6 +57,7 @@ export function DashboardPage() {
         </p>
       </header>
 
+      <AnalysisRangeSelector />
       <MetricCards overview={overview} />
 
       <section className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">

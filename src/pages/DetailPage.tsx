@@ -1,3 +1,4 @@
+import { useAnalysisRange } from '@/analysis/AnalysisRangeProvider'
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { Search } from 'lucide-react'
@@ -21,6 +22,7 @@ import {
 import { useDisplayCurrency } from '@/presentation/DisplayCurrencyProvider'
 
 export function DetailPage() {
+  const range = useAnalysisRange()
   const display = useDisplayCurrency()
   const { format: formatMoney } = display
   const money = (value: string | null) => value === null ? '—' : formatMoney(value)
@@ -93,6 +95,7 @@ export function DetailPage() {
       />
 
       <section className="min-w-0 space-y-4">
+        {range.showRange && <p role="note" className="rounded-lg bg-muted p-3 text-sm">Detalle mensual de {view.period.label}. El detalle por instrumento del rango está pendiente; los valores de esta pantalla corresponden únicamente al mes final.</p>}
         <header>
           <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
           <p className="mt-1 text-sm text-muted-foreground">{view.period.label}</p>
