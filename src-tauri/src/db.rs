@@ -11,12 +11,15 @@ const CASH_LEGS_SQL: &str = include_str!("../migrations/003_cash_movement_legs.s
 const TRADE_COSTS_SQL: &str = include_str!("../migrations/004_trade_cost_components.sql");
 const FX_ENRICHMENTS_SQL: &str = include_str!("../migrations/005_transaction_fx_enrichments.sql");
 
+const SALARY_SQL: &str = include_str!("../migrations/006_salary_months.sql");
+
 const MIGRATIONS: &[(&str, &str)] = &[
     ("001", SCHEMA_SQL),
     ("002", PROVENANCE_SQL),
     ("003", CASH_LEGS_SQL),
     ("004", TRADE_COSTS_SQL),
     ("005", FX_ENRICHMENTS_SQL),
+    ("006", SALARY_SQL),
 ];
 
 /// Una referencia al `last_insert_rowid` de una sentencia anterior de la misma transacción.
@@ -117,11 +120,9 @@ pub async fn initialize(app_config_dir: &Path) -> Result<SqlitePool, String> {
     Ok(pool)
 }
 
-pub async fn count_portfolios(pool: &SqlitePool) -> i64 {
-    sqlx::query_scalar("SELECT COUNT(*) FROM portfolios")
-        .fetch_one(pool)
-        .await
-        .unwrap_or(0)
+pub async fn has_user_data(pool: &SqlitePool) -> bool {
+    sqlx::query_scalar::<_, i64>("SELECT EXISTS(SELECT 1 FROM portfolios) OR EXISTS(SELECT 1 FROM salary_months)")
+        .fetch_one(pool).await.map(|value| value != 0).unwrap_or(true)
 }
 
 pub async fn select(
@@ -474,6 +475,7 @@ mod tests {
                 "003".to_string(),
                 "004".to_string(),
                 "005".to_string(),
+                "006".to_string(),
             ]
         );
 
@@ -493,4 +495,23 @@ mod tests {
         .unwrap();
         assert_eq!(legs, 1);
     }
+    #[tokio::test]
+    async fn salary_only_data_requires_safety_backup() {
+        let pool = test_pool().await;
+        assert!(!super::has_user_data(&pool).await);
+        sqlx::query("INSERT INTO salary_months (month, document, revision) VALUES ('2026-11', '{}', 1)").execute(&pool).await.unwrap();
+        assert!(super::has_user_data(&pool).await);
+    }
+
+    #[tokio::test]
+    async fn old_backup_schema_is_restorable_and_upgrades_to_salary_schema() {
+        let pool = test_pool().await;
+        sqlx::query("DROP TABLE salary_months").execute(&pool).await.unwrap();
+        sqlx::query("DELETE FROM schema_migrations WHERE version = '006'").execute(&pool).await.unwrap();
+        assert!(crate::health::check_database(&pool).await.is_err());
+        crate::health::check_restorable_database(&pool).await.unwrap();
+        super::apply_schema(&pool).await.unwrap();
+        crate::health::check_database(&pool).await.unwrap();
+    }
+
 }

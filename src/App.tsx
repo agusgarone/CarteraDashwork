@@ -1,3 +1,4 @@
+import { SalaryPage } from '@/salary/SalaryPage'
 import { StartupReadySignal } from '@/startup/StartupReadySignal'
 import { AnalysisRangeProvider } from '@/analysis/AnalysisRangeProvider'
 import { DisplayCurrencyProvider } from '@/presentation/DisplayCurrencyProvider'
@@ -23,6 +24,7 @@ export default function App() {
                   <Route element={<AppShell />}>
                     <Route index element={<DashboardPage />} />
                     <Route path="detalle" element={<DetailPage />} />
+                    <Route path="sueldo" element={<SalaryPage />} />
                     <Route path="datos" element={<DataPage />} />
                     <Route path="*" element={<Navigate to="/" replace />} />
                   </Route>

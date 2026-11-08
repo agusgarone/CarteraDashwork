@@ -261,11 +261,7 @@ async fn has_user_data(state: tauri::State<'_, AppState>) -> Result<bool, String
         return Ok(true);
     }
     if let Ok(pool) = state.pool().await {
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM portfolios")
-            .fetch_one(&pool)
-            .await
-            .unwrap_or(0);
-        return Ok(count > 0);
+        return Ok(db::has_user_data(&pool).await);
     }
     Ok(state.config_dir.join("cartera.db").is_file())
 }
@@ -313,7 +309,7 @@ async fn restore_owned(
             inner.pool.clone()
         };
         if let Some(pool) = pool {
-            needs_safety = db::count_portfolios(&pool).await > 0;
+            needs_safety = db::has_user_data(&pool).await;
         } else {
             needs_safety = config_dir.join("cartera.db").is_file();
         }

@@ -1,6 +1,6 @@
 import brandMark from '@/assets/isotipo-MAG.png'
 import { DisplayCurrencySelector, DisplayCurrencyReference } from './DisplayCurrencySelector'
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import { Upload } from 'lucide-react'
 import { cn } from 'cn'
 import { usePortfolioOverview } from '@/application/PortfolioOverviewProvider'
@@ -13,10 +13,12 @@ import { Button } from '@/components/ui/button'
 const links = [
   { to: '/', label: 'Resumen', end: true },
   { to: '/detalle', label: 'Detalle', end: false },
+  { to: '/sueldo', label: 'Sueldo y gastos', end: false },
   { to: '/datos', label: 'Datos', end: false },
 ]
 
 export function AppShell() {
+  const salaryRoute = useLocation().pathname.startsWith('/sueldo')
   const { setOpen } = useImportDialog()
   const { screen } = usePortfolioOverview()
   const lastLoad =
@@ -56,23 +58,25 @@ export function AppShell() {
             </nav>
           </div>
 
-          <div className="ml-auto flex flex-wrap items-center gap-3">
-            <HomePeriodSelector />
-            <DisplayCurrencySelector />
-            <p className="text-xs text-muted-foreground">
-              Última carga: <span className="text-foreground">{lastLoad}</span>
-            </p>
-            <Button type="button" onClick={() => setOpen(true)}>
-              <Upload />
-              Importar mes
-            </Button>
-          </div>
+          {!salaryRoute && (
+            <div className="ml-auto flex flex-wrap items-center gap-3">
+              <HomePeriodSelector />
+              <DisplayCurrencySelector />
+              <p className="text-xs text-muted-foreground">
+                Última carga: <span className="text-foreground">{lastLoad}</span>
+              </p>
+              <Button type="button" onClick={() => setOpen(true)}>
+                <Upload />
+                Importar mes
+              </Button>
+            </div>
+          )}
         </div>
       </header>
 
       <main className="mx-auto w-full max-w-[1440px] px-6 py-8 lg:px-10">
         <AppHealthBanner />
-        <DisplayCurrencyReference />
+        {!salaryRoute && <DisplayCurrencyReference />}
         <Outlet />
       </main>
       <ImportMonthDialog />

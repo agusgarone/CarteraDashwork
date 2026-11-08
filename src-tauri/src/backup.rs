@@ -146,7 +146,7 @@ pub async fn validate_staging(data_dir: &Path) -> Result<(), String> {
     }
     let options = db::connect_options(&staged_database).create_if_missing(false);
     let staged_pool = db::connect(options).await.map_err(|error| error.to_string())?;
-    let report = health::check_database(&staged_pool).await;
+    let report = health::check_restorable_database(&staged_pool).await;
     staged_pool.close().await;
     report
 }

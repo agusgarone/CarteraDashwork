@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use sqlx::SqlitePool;
 
-pub const EXPECTED_MIGRATIONS: &[&str] = &["001", "002", "003", "004", "005"];
+pub const EXPECTED_MIGRATIONS: &[&str] = &["001", "002", "003", "004", "005", "006"];
 
 pub struct HealthReport {
     pub ok: bool,
@@ -27,6 +27,14 @@ pub async fn inspect(pool: &SqlitePool, data_dir: &Path) -> HealthReport {
 }
 
 pub async fn check_database(pool: &SqlitePool) -> Result<(), String> {
+    check_database_version(pool, false).await
+}
+
+pub async fn check_restorable_database(pool: &SqlitePool) -> Result<(), String> {
+    check_database_version(pool, true).await
+}
+
+async fn check_database_version(pool: &SqlitePool, allow_previous: bool) -> Result<(), String> {
     let foreign_keys: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
         .fetch_one(pool)
         .await
@@ -49,7 +57,9 @@ pub async fn check_database(pool: &SqlitePool) -> Result<(), String> {
             .await
             .map_err(|error| format!("No se pudo leer el schema: {error}"))?;
     let expected: Vec<String> = EXPECTED_MIGRATIONS.iter().map(|version| (*version).to_string()).collect();
-    if versions != expected {
+    // Schema 005 is upgraded by initialize after restoring a pre-budget backup.
+    let previous = expected[..5].to_vec();
+    if versions != expected && !(allow_previous && versions == previous) {
         return Err(
             "La base no tiene el schema de esta versión. No se creó una base nueva encima.".into(),
         );
