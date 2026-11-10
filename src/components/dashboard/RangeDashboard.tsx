@@ -1,4 +1,5 @@
-﻿import type { ReactNode } from 'react'
+import { ExternalFlowFxNotice } from './ExternalFlowFxNotice'
+import type { ReactNode } from 'react'
 import type { RangeAnalysisResult } from '@/analysis/rangeAnalysisService'
 import { rangePeriodLabel } from '@/analysis/analysisRange'
 import { useDisplayCurrency } from '@/presentation/DisplayCurrencyProvider'
@@ -11,6 +12,7 @@ export function RangeDashboard({ result, loading, error, controls }: { result: R
   if (loading) content = <p role="status">Calculando el rango…</p>
   else if (error) content = <p role="alert">No se pudo analizar el rango: {error}</p>
   else if (result?.status === 'INCOMPLETE_RANGE') content = <p role="alert">Rango incompleto. Faltan períodos importados: {result.missingPeriods.join(', ')}.</p>
+  else if (result?.status === 'UNAVAILABLE' && 'externalFlowValuation' in result && result.externalFlowValuation) content = <ExternalFlowFxNotice valuation={result.externalFlowValuation} />
   else if (!result || result.status !== 'AVAILABLE') content = <p role="alert">Rango no disponible. Revisá que el inicio sea anterior o igual al final y que existan los snapshots de apertura y cierre.</p>
   else if (display.requestedCurrency === 'USD' && (display.loading || display.periodId !== result.range.endPeriodId)) content = <p role="status">Consultando referencia USD del período final…</p>
   else {

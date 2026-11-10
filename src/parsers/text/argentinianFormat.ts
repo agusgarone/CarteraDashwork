@@ -5,7 +5,8 @@ import Decimal from 'decimal.js'
  * "1.250.000,00" y "188,58" son válidos. No calcula rendimiento.
  */
 export function parseArgentineNumber(raw: string): Decimal | null {
-  const trimmed = raw.trim().replace(/\s/g, '')
+  const token = raw.trim().replace(/\s/g, '')
+  const trimmed = /^\(\d[\d.,]*\)$/.test(token) ? '-' + token.slice(1, -1) : token
   if (trimmed.length === 0) return null
 
   const argentine = trimmed.match(/^([+-])?(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d+))?$/)
@@ -56,6 +57,7 @@ export function readScaledAmount(raw: string): { value: Decimal; text: string } 
 }
 
 function amountScale(numeric: string): number {
+  if (/^\(\d[\d.,]*\)$/.test(numeric)) numeric = numeric.slice(1, -1)
   if (/^[+-]?\d{1,3}(?:\.\d{3})+(?:,(\d+))?$/.test(numeric) || /^[+-]?\d+(?:,(\d+))?$/.test(numeric)) {
     const comma = numeric.match(/,(\d+)$/)
     return comma?.[1].length ?? 0

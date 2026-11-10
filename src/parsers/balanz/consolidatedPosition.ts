@@ -227,7 +227,8 @@ function draftsFromPdf(document: PdfTextDocument): PositionDraft[] {
 
 function toPosition(draft: PositionDraft, warnings: ParserWarning[]): ParsedPosition | null {
   const ticker = draft.cells.ticker?.trim() ?? ''
-  if (!TICKER.test(ticker)) return null
+  const fundCode = draft.normalizedCategory === 'FUND' && /^[A-Za-z][A-Za-z0-9.]{0,14}$/.test(ticker)
+  if (!TICKER.test(ticker) && !fundCode) return null
 
   const name = draft.cells.name?.trim() ?? ''
   const sourceReference = [ticker, name].filter((part) => part.length > 0).join(' ')

@@ -1,3 +1,4 @@
+import { ExternalFlowFxNotice } from '@/components/dashboard/ExternalFlowFxNotice'
 import { useEffect, useReducer, useRef } from 'react'
 import { AlertCircle, Check, FileText, Loader2 } from 'lucide-react'
 import { useImportDialog } from '@/components/import/ImportDialogProvider'
@@ -231,6 +232,7 @@ function ImportResult({ result }: { result: ImportPeriodResultView }) {
           {result.summary.corporateActionsCount === 1 ? 'acción corporativa' : 'acciones corporativas'}
         </li>
       </ul>
+      {result.externalFlowValuation ? <ExternalFlowFxNotice valuation={result.externalFlowValuation} /> : null}
       {result.analysis ? (
         <dl className="mt-4 space-y-1 text-sm"><dt className="mb-2 text-xs text-muted-foreground">Valores originales de importación · ARS</dt>
           <div className="flex justify-between gap-4">

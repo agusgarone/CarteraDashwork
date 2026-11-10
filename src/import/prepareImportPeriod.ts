@@ -1,3 +1,4 @@
+import type { Instrument } from '../domain/instrument'
 import { matchesPeriodClose } from './snapshotPeriodDate'
 import type { DocumentType } from '../domain/document'
 import { parseBalanzConsolidatedPositionDocument, parseBalanzConsolidatedPositionText } from '../parsers/balanz/consolidatedPosition'
@@ -69,6 +70,7 @@ export async function prepareImportPeriod(
   files: ImportFile[],
   stagingDir: string,
   fileSystem: ImportFileSystem,
+  knownFunds: readonly Instrument[] = [],
 ): Promise<PreparedImport> {
   const inputs: ParsedInput[] = []
   const seenHashes = new Set<string>()
@@ -118,7 +120,7 @@ export async function prepareImportPeriod(
       results: null,
     })
   }
-  return classify(inputs)
+  return classify(inputs, knownFunds)
 }
 
 interface ParsedInput {
@@ -132,7 +134,7 @@ interface ParsedInput {
   results: ParsedPeriodResults | null
 }
 
-function classify(inputs: ParsedInput[]): PreparedImport {
+function classify(inputs: ParsedInput[], knownFunds: readonly Instrument[]): PreparedImport {
   const accounts = inputs.filter((input) => input.kind === 'MONTHLY_ACCOUNT')
   const funds = inputs.filter((input) => input.kind === 'MONTHLY_FUND_STATEMENT')
   const positions = inputs.filter((input) => input.kind === 'CONSOLIDATED_POSITION')
@@ -206,8 +208,11 @@ function classify(inputs: ParsedInput[]): PreparedImport {
       file: accountFile,
       parsed: enrichFundSubscriptions({
         account,
+        knownFunds,
         fundStatement: fund,
-        positions: closing.position.positions,
+        positions: [...(opening?.position.positions ?? []), ...closing.position.positions].filter(
+          (position, index, all) => all.findIndex(other => other.ticker === position.ticker && other.normalizedCategory === position.normalizedCategory) === index,
+        ),
       }),
     },
     fund: { file: fundFile, parsed: fund },

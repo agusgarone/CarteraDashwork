@@ -1,3 +1,4 @@
+import { ExternalFlowFxNotice } from '@/components/dashboard/ExternalFlowFxNotice'
 import { ArrowRight } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { SignedDecimal } from '@/components/shared/SignedDecimal'
@@ -26,7 +27,7 @@ export function PerformanceOrigin({ overview }: { overview: PortfolioOverviewVie
           </Link>
         </Button>
       </div>
-      {breakdown ? (
+      {overview.externalFlowValuation ? <ExternalFlowFxNotice valuation={overview.externalFlowValuation} /> : breakdown ? (
         <div className="grid gap-4 lg:grid-cols-3">
           <Card>
             <CardContent>

@@ -1,3 +1,5 @@
+import type { FundDenominationResolution } from '../identity/fundDenominationAliases'
+import type { PendingExternalFlowFx } from '../engine/calculations/externalFlowValuation'
 import type { DatabaseClient } from '../database/client'
 import type { ReconciliationStatus } from '../domain/reconciliation'
 import type { DocumentType } from '../domain/document'
@@ -14,6 +16,8 @@ import { createSnapshotRepository } from '../repositories/snapshotRepository'
 import { createTransactionRepository } from '../repositories/transactionRepository'
 
 export interface ImportPeriodResultView {
+  fundIdentityAliases?: FundDenominationResolution[]
+  externalFlowValuation?: PendingExternalFlowFx
   outcome: 'created' | 'existing'
   period: {
     id: string
@@ -100,7 +104,7 @@ export async function importSelectedDocuments(options: {
     })
   }
 
-  const cashLedgerReconciled = imported.analysis?.performance.cash.status === 'CASH_LEDGER_RECONCILED'
+  const cashLedgerReconciled = imported.nominalCashReconciled ?? (imported.analysis?.performance.cash.status === 'CASH_LEDGER_RECONCILED')
   const positionAttributionPartial = imported.analysis?.performance.partialExplainedResult != null
   const attributionPending = imported.analysis?.performance.attributionStatus === 'PENDING'
   const periodReturn =
@@ -109,6 +113,8 @@ export async function importSelectedDocuments(options: {
       : null
 
   return {
+    ...(imported.fundIdentityAliases ? { fundIdentityAliases: imported.fundIdentityAliases } : {}),
+    ...(imported.externalFlowValuation ? { externalFlowValuation: imported.externalFlowValuation } : {}),
     outcome: imported.outcome === 'existing' ? 'existing' : 'created',
     period: {
       id: period.id,

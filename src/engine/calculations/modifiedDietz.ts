@@ -1,3 +1,5 @@
+import type { CurrencyCode } from '../../domain/currency'
+import { valueExternalFlows, PendingExternalFlowFxError, type ExternalFlowBaseValuation } from './externalFlowValuation'
 import Decimal from 'decimal.js'
 import type { DecimalString } from '../../domain/common'
 import type { Transaction } from '../../domain/transaction'
@@ -28,6 +30,8 @@ const SCALE = 28
 const DietzDecimal = Decimal.clone({ precision: 40, rounding: Decimal.ROUND_HALF_UP })
 
 export interface ModifiedDietzInput {
+  baseCurrency?: CurrencyCode
+  externalFlowValuations?: readonly ExternalFlowBaseValuation[]
   investmentResult: DecimalString
   openingValue: DecimalString
   openingDate: string
@@ -43,6 +47,13 @@ export function calculateModifiedDietz(input: ModifiedDietzInput): PeriodReturnR
     )
   }
 
+  let valuations = input.externalFlowValuations
+  if (input.baseCurrency) {
+    const unvalued = input.transactions.filter(transaction => !valuations?.some(row => row.transactionId === transaction.id))
+    const resolved = valueExternalFlows(unvalued, input.baseCurrency)
+    if (resolved.status === 'PENDING_EXTERNAL_FLOW_FX') throw new PendingExternalFlowFxError(resolved, input.openingValue, '')
+    valuations = [...(valuations ?? []), ...resolved.valuations]
+  }
   const numerator = parseDecimal(input.investmentResult)
   let weightedCapital = new DietzDecimal(input.openingValue)
   const externalFlows: ModifiedDietzFlow[] = []
@@ -51,7 +62,7 @@ export function calculateModifiedDietz(input: ModifiedDietzInput): PeriodReturnR
     if (transaction.type !== 'CONTRIBUTION' && transaction.type !== 'WITHDRAWAL') continue
 
     const weightDays = flowWeightDays(transaction, input.openingDate, input.closingDate, totalPeriodDays)
-    const magnitude = new DietzDecimal(resolveExternalFlowAmount(transaction))
+    const magnitude = new DietzDecimal(valuations?.find(row => row.transactionId === transaction.id)?.amountBase ?? resolveExternalFlowAmount(transaction))
     const amount = transaction.type === 'CONTRIBUTION' ? magnitude : magnitude.neg()
     const weight = new DietzDecimal(weightDays).div(totalPeriodDays)
     const weightedAmount = amount.times(weight)

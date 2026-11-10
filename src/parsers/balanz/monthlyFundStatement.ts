@@ -89,7 +89,7 @@ function fundsFromText(text: string, reportDate: string): { funds: ParsedFundSta
 
   for (const rawLine of text.split(/\r?\n/)) {
     const line = rawLine.trim()
-    if (line.length === 0 || isIgnored(line)) continue
+    if (line.length === 0) continue
     const header = readFundHeader(line)
     if (header) {
       if (current) funds.push(finishFund(current))
@@ -97,6 +97,7 @@ function fundsFromText(text: string, reportDate: string): { funds: ParsedFundSta
       columns = null
       continue
     }
+    if (isIgnored(line)) continue
     if (isColumnHeader(line)) {
       columns = line.split('|').map((cell) => columnKey(cell)).filter((key): key is FundColumn => key !== null)
       continue
@@ -124,7 +125,7 @@ function fundsFromPdf(document: PdfTextDocument, reportDate: string): { funds: P
 
   for (const row of document.rows) {
     const text = joinRow(row)
-    if (text.length === 0 || isIgnored(text)) continue
+    if (text.length === 0) continue
     const header = readFundHeader(text)
     if (header) {
       if (current) funds.push(finishFund(current))
@@ -132,6 +133,7 @@ function fundsFromPdf(document: PdfTextDocument, reportDate: string): { funds: P
       columns = null
       continue
     }
+    if (isIgnored(text)) continue
     const headerColumns = headerFromRow(row)
     if (headerColumns) {
       columns = headerColumns

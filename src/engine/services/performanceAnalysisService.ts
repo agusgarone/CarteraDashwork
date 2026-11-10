@@ -101,6 +101,8 @@ export function createPerformanceAnalysisService(
         : undefined
       const fxRates = fxRows ? new Map(fxRows.map((row) => [row.transactionId, row.fxRate])) : undefined
       const periodReturn = calculateModifiedDietz({
+        baseCurrency: closing.currency,
+        externalFlowValuations: base.externalFlowValuations,
         investmentResult: base.investmentResult,
         openingValue: base.openingValue,
         openingDate: opening.date,

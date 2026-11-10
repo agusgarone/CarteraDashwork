@@ -1,3 +1,4 @@
+import type { FundDenominationResolution } from '../../identity/fundDenominationAliases'
 import type { DecimalString } from '../../domain/common'
 import type { CorporateActionType } from '../../domain/corporateAction'
 import type { CurrencyCode } from '../../domain/currency'
@@ -41,6 +42,8 @@ export interface NormalizedTransaction {
   taxes: DecimalString | null
   currency: CurrencyCode
   fxRate: DecimalString | null
+  sourceDocumentType?: 'MONTHLY_ACCOUNT' | 'MONTHLY_FUND_STATEMENT'
+  fundIdentity?: { name: string; shareClass: string; brokerCode: string; denominations?: FundDenominationResolution[] }
   sourceReference: string
 }
 
@@ -112,6 +115,7 @@ export interface ParsedFxOperation {
 export interface ParsedMonthlyAccount {
   broker: 'BALANZ'
   documentType: 'MONTHLY_ACCOUNT'
+  fundInstruments?: { name: string; shareClass: string; ticker: string }[]
   period: {
     startDate: string
     endDate: string

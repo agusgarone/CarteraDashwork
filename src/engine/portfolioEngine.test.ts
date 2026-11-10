@@ -176,14 +176,12 @@ describe('periodAnalysisService.analyzePeriod', () => {
     )
   })
 
-  it('no convierte un aporte en otra moneda', async () => {
+  it('mantiene pendiente un aporte extranjero sin FX documental', async () => {
     const repositories = fakeRepositories({
       transactions: [movement('1', 'CONTRIBUTION', '10.00', { currency: 'USD_MEP' })],
     })
 
-    await expect(createPeriodAnalysisService(repositories).analyzePeriod('august')).rejects.toThrow(
-      /USD_MEP/,
-    )
+    await expect(createPeriodAnalysisService(repositories).analyzePeriod('august')).rejects.toMatchObject({ status: 'PENDING_EXTERNAL_FLOW_FX', pending: { flows: [expect.objectContaining({ currency: 'USD_MEP', type: 'CONTRIBUTION', amount: '10.00', reason: 'MISSING_FX' })] } })
   })
 
   it('falla si el período no existe', async () => {

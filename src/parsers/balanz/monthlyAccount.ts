@@ -56,7 +56,7 @@ interface LineGroup {
  */
 export function parseBalanzMonthlyAccountText(text: string): ParsedMonthlyAccount {
   assertMonthlyAccount(text)
-  return buildResult(readPeriod(text), annotate(statementLinesFromText(text)))
+  return withFundInstruments(buildResult(readPeriod(text), annotate(statementLinesFromText(text))), text)
 }
 
 export async function parseBalanzMonthlyAccountPdf(data: Uint8Array): Promise<ParsedMonthlyAccount> {
@@ -66,7 +66,18 @@ export async function parseBalanzMonthlyAccountPdf(data: Uint8Array): Promise<Pa
 
 export function parseBalanzMonthlyAccountDocument(document: PdfTextDocument): ParsedMonthlyAccount {
   assertMonthlyAccount(document.text)
-  return buildResult(readPeriod(document.text), annotate(statementLinesFromPdf(document)))
+  return withFundInstruments(buildResult(readPeriod(document.text), annotate(statementLinesFromPdf(document))), document.text)
+}
+
+function withFundInstruments(account: ParsedMonthlyAccount, text: string): ParsedMonthlyAccount {
+  const fundInstruments = text.split(/\r?\n/).flatMap(line => {
+    const match = line.trim().match(/^(.+?)\s+-\s+([A-Z][A-Z0-9.]{0,14})\s+([A-Z0-9]+)\s*$/)
+    if (!match) return []
+    const [, name, code, shareClass] = match
+    if (!name || !code || !shareClass || !name.endsWith(' ' + shareClass)) return []
+    return [{ name, shareClass, ticker: code + ' ' + shareClass }]
+  })
+  return fundInstruments.length ? { ...account, fundInstruments } : account
 }
 
 function assertMonthlyAccount(text: string): void {

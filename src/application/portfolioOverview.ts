@@ -1,3 +1,4 @@
+import { PendingExternalFlowFxError, type PendingExternalFlowFx } from '../engine/calculations/externalFlowValuation'
 import type { DatabaseClient } from '../database/client'
 import type { EntityId } from '../domain/common'
 import type { PortfolioDocument } from '../domain/document'
@@ -90,6 +91,7 @@ export interface OverviewImportDocument {
  * como si fuera el capital desde el inicio.
  */
 export interface PortfolioOverviewView {
+  externalFlowValuation?: PendingExternalFlowFx
   period: {
     id: string
     year: number
@@ -204,7 +206,7 @@ export async function loadPortfolioOverview(options: {
   const run = await reconciliations.getLatestByPeriod(selected.id)
   const performance = createPerformanceAnalysisService({
     instruments,
-    analysis: createPeriodAnalysisService({ periods, snapshots, transactions }),
+    analysis: createPeriodAnalysisService({ periods, snapshots, transactions, fxEnrichments }),
     periods,
     snapshots,
     transactions,
@@ -213,6 +215,7 @@ export async function loadPortfolioOverview(options: {
     fxEnrichments,
   })
 
+  let externalFlowValuation: PendingExternalFlowFx | undefined
   let openingValue = run?.openingValue ?? null
   let contributions = run?.contributions ?? null
   let withdrawals = run?.withdrawals ?? null
@@ -254,21 +257,29 @@ export async function loadPortfolioOverview(options: {
       }
     }
   } catch (error) {
-    console.error(error)
-    if (!run) {
-      try {
-        const base = await createPeriodAnalysisService({ periods, snapshots, transactions }).analyzePeriod(selected.id)
-        openingValue = base.openingValue
-        contributions = base.contributions
-        withdrawals = base.withdrawals
-        investmentResult = base.investmentResult
-      } catch (baseError) {
-        console.error(baseError)
+    if (error instanceof PendingExternalFlowFxError) {
+      externalFlowValuation = error.pending
+      openingValue = error.openingValue
+      contributions = withdrawals = investmentResult = explainedResult = unexplainedDifference = null
+      status = null
+      performanceAttribution = 'PENDING'
+    } else {
+      console.error(error)
+      if (!run) {
+        try {
+          const base = await createPeriodAnalysisService({ periods, snapshots, transactions, fxEnrichments }).analyzePeriod(selected.id)
+          openingValue = base.openingValue
+          contributions = base.contributions
+          withdrawals = base.withdrawals
+          investmentResult = base.investmentResult
+        } catch (baseError) {
+          console.error(baseError)
+        }
       }
-    }
-    const movementTypes = (await transactions.getByPeriod(selected.id)).map((movement) => movement.type)
-    if (status === null && movementTypes.some((type) => INTERNAL_MOVEMENT_TYPES.has(type))) {
-      status = 'FAILED'
+      const movementTypes = (await transactions.getByPeriod(selected.id)).map((movement) => movement.type)
+      if (status === null && movementTypes.some((type) => INTERNAL_MOVEMENT_TYPES.has(type))) {
+        status = 'FAILED'
+      }
     }
   }
 
@@ -297,6 +308,7 @@ export async function loadPortfolioOverview(options: {
     .sort((left, right) => left.year - right.year || left.month - right.month)
 
   return {
+    ...(externalFlowValuation ? { externalFlowValuation } : {}),
     period: {
       id: selected.id,
       year: selected.year,

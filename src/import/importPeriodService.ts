@@ -1,3 +1,8 @@
+import { canonicalFundBrokerCode } from '../identity/fundDenominationAliases'
+import type { FundDenominationResolution } from '../identity/fundDenominationAliases'
+import { PendingExternalFlowFxError, type PendingExternalFlowFx } from '../engine/calculations/externalFlowValuation'
+import { resolvePeriodSnapshots } from '../engine/services/periodSnapshots'
+import { reconcileCashLedger } from '../engine/calculations/cashLedger'
 import { resolveOperationTicker } from '../parsers/balanz/operationTicker'
 import type { DatabaseClient } from '../database/client'
 import type { EntityId } from '../domain/common'
@@ -51,6 +56,9 @@ export interface ImportPeriodInput {
 }
 
 export interface ImportPeriodResult {
+  fundIdentityAliases?: FundDenominationResolution[]
+  externalFlowValuation?: PendingExternalFlowFx
+  nominalCashReconciled?: boolean
   outcome: 'imported' | 'existing'
   periodId: EntityId
   openingSnapshotId: EntityId
@@ -106,7 +114,10 @@ export function createImportPeriodService(options: ImportPeriodServiceOptions): 
       const createdFiles: string[] = []
       let persisted = false
       try {
-        const prepared = await prepareImportPeriod(input.files, stagingDir, fileSystem)
+        const prepared = await prepareImportPeriod(input.files, stagingDir, fileSystem, await instruments.getAll())
+        const aliases = prepared.account.parsed.transactions.flatMap(transaction => transaction.fundIdentity?.denominations ?? [])
+        const fundIdentityAliases = aliases.filter((alias, index) => aliases.findIndex(other => other.canonicalIdentity === alias.canonicalIdentity && other.rawName === alias.rawName) === index)
+        const identityAudit = fundIdentityAliases.length ? { fundIdentityAliases } : {}
         await rememberExistingDocuments(prepared, input.portfolioId)
         const reusedOpeningId = await resolveOpening(prepared, input.portfolioId)
         const reusedClosingId = await reusableSnapshotId(input.portfolioId, prepared.closing)
@@ -121,7 +132,7 @@ export function createImportPeriodService(options: ImportPeriodServiceOptions): 
           )
           await writeResultsEnrichment(prepared, alreadyImported.periodId)
           const analysis = await readAnalysis(alreadyImported.periodId)
-          return { outcome: 'existing', ...alreadyImported, analysis }
+          return { outcome: 'existing', ...alreadyImported, ...analysis, ...identityAudit }
         }
 
         const resultsOnly = await resultsOnlyImport(prepared, input.portfolioId, reusedOpeningId)
@@ -142,7 +153,7 @@ export function createImportPeriodService(options: ImportPeriodServiceOptions): 
           persisted = true
           await writeResultsEnrichment(prepared, resultsOnly.periodId)
           const analysis = await readAnalysis(resultsOnly.periodId)
-          return { outcome: 'imported', ...resultsOnly, analysis }
+          return { outcome: 'imported', ...resultsOnly, ...analysis, ...identityAudit }
         }
 
         for (const file of prepared.files) {
@@ -168,7 +179,8 @@ export function createImportPeriodService(options: ImportPeriodServiceOptions): 
           periodId: saved.closingPeriodId,
           openingSnapshotId: saved.openingSnapshotId,
           closingSnapshotId: saved.closingSnapshotId,
-          analysis,
+          ...analysis,
+          ...identityAudit,
         }
       } catch (error) {
         if (!persisted) {
@@ -181,14 +193,22 @@ export function createImportPeriodService(options: ImportPeriodServiceOptions): 
     },
   }
 
-  async function readAnalysis(periodId: EntityId): Promise<PeriodPerformanceAnalysis | null> {
+  async function readAnalysis(periodId: EntityId): Promise<Pick<ImportPeriodResult, 'analysis' | 'externalFlowValuation' | 'nominalCashReconciled'>> {
     try {
       const analysis = await analyzeFromDatabase(db, periodId)
       await ensureReconciliation(periodId, analysis)
-      return analysis
+      return { analysis }
     } catch (error) {
+      if (error instanceof PendingExternalFlowFxError) {
+        const boundary = await resolvePeriodSnapshots(periodId, { periods, snapshots })
+        const opening = await snapshots.getAggregate(boundary.opening.id)
+        const closing = await snapshots.getAggregate(boundary.closing.id)
+        const legs = await createCashMovementLegRepository(db).getByPeriod(periodId)
+        const nominalCashReconciled = Boolean(opening && closing && reconcileCashLedger({ opening: opening.cashBalances, closing: closing.cashBalances, legs }).status === 'RECONCILED')
+        return { analysis: null, externalFlowValuation: error.pending, nominalCashReconciled }
+      }
       console.error('El período quedó importado y el análisis no se guardó.', error)
-      return null
+      return { analysis: null }
     }
   }
 
@@ -253,14 +273,14 @@ export function createImportPeriodService(options: ImportPeriodServiceOptions): 
     const storedHoldings = stored.positions.map((position) => {
       const instrument = known.get(position.instrumentId)
       return {
-        key: instrument ? `${instrument.ticker}|${instrument.category}` : position.instrumentId,
+        key: instrument ? instrumentKey(instrument.ticker, instrument.category) : position.instrumentId,
         quantity: position.quantity,
         unitPrice: position.unitPrice,
         marketValue: position.marketValue,
       }
     })
     const incomingHoldings = classified.enriched.position.positions.map((position) => ({
-      key: `${position.ticker}|${position.normalizedCategory}`,
+      key: instrumentKey(position.ticker, position.normalizedCategory),
       quantity: position.quantity,
       unitPrice: position.unitPrice ?? '',
       marketValue: position.marketValue,
@@ -389,30 +409,50 @@ export function createImportPeriodService(options: ImportPeriodServiceOptions): 
       ...(prepared.opening?.enriched.position.positions ?? []),
       ...prepared.closing.enriched.position.positions,
     ]
+    const knownInstruments = await instruments.getAll()
     const instrumentRows: ImportInstrumentRow[] = []
     for (const position of positions) {
       const key = instrumentKey(position.ticker, position.normalizedCategory)
       if (instrumentRows.some((row) => row.key === key)) continue
-      const found = await instruments.findByTickerAndCategory(position.ticker, position.normalizedCategory)
+      const matches = knownInstruments.filter(instrument => instrument.category === position.normalizedCategory && instrumentKey(instrument.ticker, instrument.category) === key)
+      if (matches.length > 1) throw new ImportPeriodValidationError('Hay más de un instrumento para ' + key + '.')
+      const found = matches[0]
+      const ticker = position.normalizedCategory === 'FUND' ? canonicalFundBrokerCode(position.ticker) : position.ticker
       instrumentRows.push({
         key,
         existingId: found?.id ?? null,
-        ticker: position.ticker,
+        ticker: found?.ticker ?? ticker,
         name: position.name,
         category: position.normalizedCategory,
         currency: 'ARS',
       })
     }
 
+    for (const transaction of prepared.account.parsed.transactions) {
+      const fund = transaction.fundIdentity
+      const ticker = transaction.ticker
+      if (!fund || !ticker || instrumentRows.some(row => row.key === instrumentKey(ticker, 'FUND'))) continue
+      const found = await instruments.findByTickerAndCategory(ticker, 'FUND')
+      // Boundary instruments historically store the ARS quotation currency.
+      // The FCI document supplies the nominal currency of its movements.
+      if (found && found.currency !== 'ARS' && found.currency !== transaction.currency) {
+        throw new ImportPeriodValidationError('La moneda del fondo no coincide con su identidad guardada.')
+      }
+      instrumentRows.push({
+        key: instrumentKey(ticker, 'FUND'), existingId: found?.id ?? null,
+        ticker, name: fund.name + ' - Clase ' + fund.shareClass,
+        category: 'FUND', currency: transaction.currency, brokerIdentifier: fund.brokerCode,
+      })
+    }
+
     // An instrument bought and fully sold within the month has no boundary position.
     // Keep its trades even when the documents do not provide a normalized category.
-    const knownInstruments = await instruments.getAll()
     const movementTickers = new Set([
       ...prepared.account.parsed.transactions.map(row => row.ticker),
       ...prepared.account.parsed.corporateActions.map(row => row.ticker),
     ])
     for (const ticker of movementTickers) {
-      if (!ticker || instrumentRows.some(row => row.ticker === ticker)) continue
+      if (!ticker || instrumentRows.some(row => row.key === instrumentKey(ticker, row.category))) continue
       const known = knownInstruments.filter(row => row.ticker === ticker)
       if (known.length > 1) throw new ImportPeriodValidationError(`No hay un instrumento único para ${ticker}.`)
       const found = known[0]
@@ -507,7 +547,7 @@ export function createImportPeriodService(options: ImportPeriodServiceOptions): 
         snapshotRow('closing', 'closing', prepared.closing, closingAdapted.cashBalances, reusedClosingId),
       ],
       transactions: movements.transactions.map((movement, index) =>
-        transactionRow(movement, prepared.account.parsed.transactions[index]?.ticker ?? null, instrumentRows),
+        transactionRow(movement, prepared.account.parsed.transactions[index]?.ticker ?? null, instrumentRows, prepared.account.parsed.transactions[index]?.sourceDocumentType === 'MONTHLY_FUND_STATEMENT' ? 'fund-statement' : 'monthly-account'),
       ),
       corporateActions: movements.corporateActions.map((action, index) =>
         actionRow(action, prepared.account.parsed.corporateActions[index]?.ticker ?? '', instrumentRows),
@@ -537,7 +577,7 @@ async function analyzeFromDatabase(db: DatabaseClient, periodId: EntityId): Prom
   const fxEnrichments = createTransactionFxRepository(db)
   const service = createPerformanceAnalysisService({
     instruments: createInstrumentRepository(db),
-    analysis: createPeriodAnalysisService({ periods, snapshots, transactions }),
+    analysis: createPeriodAnalysisService({ periods, snapshots, transactions, fxEnrichments: createTransactionFxRepository(db) }),
     periods,
     snapshots,
     transactions,
@@ -613,6 +653,7 @@ function transactionRow(
   movement: ReturnType<typeof adaptMonthlyAccount>['transactions'][number],
   ticker: string | null,
   instrumentRows: readonly ImportInstrumentRow[],
+  documentKey = 'monthly-account',
 ): ImportTransactionRow {
   const explicitTicker = resolveOperationTicker({ description: movement.sourceReference ?? '' })
   if (explicitTicker && ticker !== explicitTicker) {
@@ -620,7 +661,7 @@ function transactionRow(
   }
   return {
     instrumentKey: ticker ? instrumentKeyForTicker(ticker, instrumentRows) : null,
-    documentKey: 'monthly-account',
+    documentKey,
     date: movement.date,
     type: movement.type,
     quantity: movement.quantity,
@@ -654,7 +695,7 @@ function actionRow(
 }
 
 function instrumentKeyForTicker(ticker: string, instrumentRows: readonly ImportInstrumentRow[]): string {
-  const matches = instrumentRows.filter((row) => row.ticker === ticker)
+  const matches = instrumentRows.filter((row) => row.key === instrumentKey(ticker, row.category))
   if (matches.length !== 1) {
     throw new ImportPeriodValidationError(`No hay un instrumento único para ${ticker}.`)
   }
@@ -666,7 +707,8 @@ function instrumentKeyForTicker(ticker: string, instrumentRows: readonly ImportI
 }
 
 function instrumentKey(ticker: string, category: InstrumentCategory | string): string {
-  return `${ticker}|${category}`
+  const code = category === 'FUND' ? canonicalFundBrokerCode(ticker) : ticker
+  return `${code}|${category}`
 }
 
 function sameCash(stored: readonly CashBalance[], incoming: readonly CashBalance[]): boolean {

@@ -71,6 +71,7 @@ const CASH_LEDGER_LEAD =
   'Caja reconciliada. La atribución de operaciones del período todavía está pendiente.'
 
 export function importOutcomeCopy(result: ImportPeriodResultView): { lead: string; note: string | null } {
+  if (result.externalFlowValuation) return { lead: result.outcome === 'existing' ? 'Este período ya estaba importado.' : 'Datos importados. Valuación de aportes o retiros pendiente.', note: 'Falta una cotización documental para calcular el resultado y el rendimiento.' }
   if (result.positionAttributionPartial) {
     if (result.outcome === 'existing') return { lead: 'Este período ya estaba importado.', note: PARTIAL_ATTRIBUTION_NOTE }
     return { lead: PARTIAL_ATTRIBUTION_NOTE, note: null }

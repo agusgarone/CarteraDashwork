@@ -1,3 +1,4 @@
+import type { ExternalFlowBaseValuation } from '../calculations/externalFlowValuation'
 import type { DecimalString } from '../../domain/common'
 
 /**
@@ -7,6 +8,7 @@ import type { DecimalString } from '../../domain/common'
  * expresa como porcentaje.
  */
 export interface PeriodBaseResult {
+  externalFlowValuations?: ExternalFlowBaseValuation[]
   openingValue: DecimalString
   closingValue: DecimalString
 

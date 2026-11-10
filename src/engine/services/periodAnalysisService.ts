@@ -1,7 +1,8 @@
+import { valueExternalFlows, PendingExternalFlowFxError } from '../calculations/externalFlowValuation'
+import { transactionFxRepository, type StoredTransactionFx } from '../../repositories/transactionFxRepository'
 import { resolvePeriodSnapshots } from './periodSnapshots'
 export { periodStartDate } from './periodSnapshots'
 import type { EntityId } from '../../domain/common'
-import type { CurrencyCode } from '../../domain/currency'
 import type { PortfolioPeriod } from '../../domain/period'
 import type { PortfolioSnapshot } from '../../domain/snapshot'
 import type { Transaction } from '../../domain/transaction'
@@ -10,11 +11,11 @@ import { snapshotRepository } from '../../repositories/snapshotRepository'
 import { transactionRepository } from '../../repositories/transactionRepository'
 import { aggregateExternalFlows } from '../calculations/externalFlows'
 import { calculateExpectedInvestmentResult } from '../calculations/investmentResult'
-import { AnalysisError } from '../errors/analysisErrors'
 import { normalizeMonetary } from '../money'
 import type { PeriodBaseResult } from '../models/periodBaseResult'
 
 export interface PeriodAnalysisRepositories {
+  fxEnrichments?: { getByPeriod(periodId: EntityId): Promise<StoredTransactionFx[]> }
   periods: {
     getById(id: EntityId): Promise<PortfolioPeriod | null>
   }
@@ -39,11 +40,12 @@ export function createPeriodAnalysisService(
       const { period, opening, closing } = await resolvePeriodSnapshots(periodId, repositories)
 
       const transactions = await repositories.transactions.getByPeriod(period.id)
-      assertExternalFlowsUseCurrency(transactions, closing.currency)
 
       const openingValue = normalizeMonetary(opening.totalValue)
       const closingValue = normalizeMonetary(closing.totalValue)
-      const flows = aggregateExternalFlows(transactions)
+      const valuation = valueExternalFlows(transactions, closing.currency, await repositories.fxEnrichments?.getByPeriod(period.id))
+      if (valuation.status === 'PENDING_EXTERNAL_FLOW_FX') throw new PendingExternalFlowFxError(valuation, openingValue, closingValue)
+      const flows = aggregateExternalFlows(transactions, valuation.valuations)
       const investmentResult = calculateExpectedInvestmentResult({
         openingValue,
         closingValue,
@@ -52,6 +54,7 @@ export function createPeriodAnalysisService(
       })
 
       return {
+        ...(valuation.valuations.some(row => row.currency !== row.baseCurrency) ? { externalFlowValuations: valuation.valuations } : {}),
         openingValue,
         closingValue,
         contributions: flows.contributions,
@@ -67,20 +70,5 @@ export const periodAnalysisService = createPeriodAnalysisService({
   periods: periodRepository,
   snapshots: snapshotRepository,
   transactions: transactionRepository,
+  fxEnrichments: transactionFxRepository,
 })
-
-function assertExternalFlowsUseCurrency(
-  transactions: readonly Transaction[],
-  currency: CurrencyCode,
-): void {
-  for (const transaction of transactions) {
-    if (transaction.type !== 'CONTRIBUTION' && transaction.type !== 'WITHDRAWAL') {
-      continue
-    }
-    if (transaction.currency !== currency) {
-      throw new AnalysisError(
-        `El movimiento ${transaction.id} está en ${transaction.currency} y el cierre en ${currency}.`,
-      )
-    }
-  }
-}

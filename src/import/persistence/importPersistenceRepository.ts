@@ -29,6 +29,7 @@ export interface ImportDocumentRow extends ImportIdRef {
 }
 
 export interface ImportInstrumentRow extends ImportIdRef {
+  brokerIdentifier?: string
   key: string
   ticker: string
   name: string | null
@@ -182,8 +183,8 @@ export function compileImportPlan(plan: ImportPersistencePlan): CompiledImport {
       instrument.key,
       push(statements, {
         sql: `INSERT INTO instruments (ticker, name, category, currency, broker_identifier)
-              VALUES ($1, $2, $3, $4, NULL)`,
-        params: [instrument.ticker, instrument.name, instrument.category, instrument.currency],
+              VALUES ($1, $2, $3, $4, $5)`,
+        params: [instrument.ticker, instrument.name, instrument.category, instrument.currency, instrument.brokerIdentifier ?? null],
       }),
     )
   }

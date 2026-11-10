@@ -1,3 +1,4 @@
+import { ExternalFlowFxNotice } from '@/components/dashboard/ExternalFlowFxNotice'
 import { useAnalysisRange } from '@/analysis/AnalysisRangeProvider'
 import { useState } from 'react'
 import type { ReactNode } from 'react'
@@ -95,6 +96,7 @@ export function DetailPage() {
       />
 
       <section className="min-w-0 space-y-4">
+        {view.externalFlowValuation ? <ExternalFlowFxNotice valuation={view.externalFlowValuation} /> : null}
         {range.showRange && <p role="note" className="rounded-lg bg-muted p-3 text-sm">Detalle mensual de {view.period.label}. El detalle por instrumento del rango está pendiente; los valores de esta pantalla corresponden únicamente al mes final.</p>}
         <header>
           <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>

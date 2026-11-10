@@ -1,3 +1,4 @@
+import { PendingExternalFlowFxError, type PendingExternalFlowFx } from '../engine/calculations/externalFlowValuation'
 import type { DatabaseClient } from '../database/client'
 import type { CorporateAction, CorporateActionType } from '../domain/corporateAction'
 import type { CurrencyCode } from '../domain/currency'
@@ -121,6 +122,7 @@ export interface CategoryDetail {
 }
 
 export interface PortfolioDetailView {
+  externalFlowValuation?: PendingExternalFlowFx
   period: {
     id: string
     year: number
@@ -201,7 +203,7 @@ export async function loadPortfolioDetail(options: {
 
   const performance = createPerformanceAnalysisService({
     instruments,
-    analysis: createPeriodAnalysisService({ periods, snapshots, transactions }),
+    analysis: createPeriodAnalysisService({ periods, snapshots, transactions, fxEnrichments }),
     periods,
     snapshots,
     transactions,
@@ -210,6 +212,7 @@ export async function loadPortfolioDetail(options: {
     fxEnrichments,
   })
 
+  let externalFlowValuation: PendingExternalFlowFx | undefined
   let valuation: PositionValuationResult[] = []
   let flows: PositionValueFlowAnalysis[] = []
   try {
@@ -217,7 +220,8 @@ export async function loadPortfolioDetail(options: {
     valuation = analysis.performance.positionResults
     flows = analysis.performance.positionFlows
   } catch (error) {
-    console.error(error)
+    if (error instanceof PendingExternalFlowFxError) externalFlowValuation = error.pending
+    else console.error(error)
   }
 
   const instrumentRows = await instruments.getAll()
@@ -258,6 +262,7 @@ export async function loadPortfolioDetail(options: {
   const explainedChanges = rows.map((row) => row.valuationChange).filter((value): value is string => value !== null)
 
   return {
+    ...(externalFlowValuation ? { externalFlowValuation } : {}),
     period: {
       id: selected.id,
       year: selected.year,

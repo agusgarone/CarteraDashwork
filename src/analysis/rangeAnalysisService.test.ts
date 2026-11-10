@@ -127,3 +127,30 @@ describe('integridad de la ventana', () => {
     expect(w.deps.snapshots.getLatestBefore).not.toHaveBeenCalled()
   })
 })
+
+
+describe('separación entre FX histórico y referencia de presentación', () => {
+  it('un flujo sin FX queda pendiente aunque exista MEP de presentación', async () => {
+    const w = world()
+    Object.assign(w.transactions[2]!, { currency: 'USD_MEP', sourceDocumentId: 'flow-document', netAmount: '10', grossAmount: '10' })
+    const getUsdReference = vi.fn(async () => ({
+      status: 'AVAILABLE' as const, periodId: '8', currency: 'USD_MEP' as const, rate: '9999', date: '2026-08-31', snapshotId: 'august-close',
+      source: { kind: 'EXPLICIT_SNAPSHOT_RATE' as const, broker: 'BALANZ' as const, documentId: 'closing-document', documentType: 'CONSOLIDATED_POSITION' as const, originalFilename: 'closing.pdf', localPath: 'closing.pdf', sha256: 'test-hash', parserVersion: '1', cashBalanceId: 'cash', field: 'cash_balances.fx_rate' as const, documentField: 'Tipo de cambio: MEP' as const },
+    }))
+    const historicalService = createRangeAnalysisService({ ...w.deps, getUsdReference })
+    const result = await historicalService.analyzeRange({ startPeriodId: '7', endPeriodId: '8' })
+    expect(result).toMatchObject({ status: 'UNAVAILABLE', reason: 'PENDING_EXTERNAL_FLOW_FX', externalFlowValuation: { status: 'PENDING_EXTERNAL_FLOW_FX', flows: [{ amount: '10', currency: 'USD_MEP' }] } })
+    expect(getUsdReference).not.toHaveBeenCalled()
+  })
+  it('el resultado y Dietz usan el FX del movimiento y conservan el nominal', async () => {
+    const w = world()
+    Object.assign(w.transactions[2]!, { currency: 'USD_MEP', sourceDocumentId: 'flow-document', fxRate: '1000', netAmount: '10', grossAmount: '10' })
+    const result = await w.service.analyzeRange({ startPeriodId: '7', endPeriodId: '8' })
+    expect(result.status).toBe('AVAILABLE')
+    if (result.status !== 'AVAILABLE') throw new Error('Falta el rango')
+    expect(result.base.withdrawals).toBe('10000.00')
+    expect(result.periodReturn.externalFlows[2]!.amount).toBe('-10000.0000000000000000000000000000')
+    expect(w.transactions[2]!.netAmount).toBe('10')
+    expect(w.transactions[2]!.currency).toBe('USD_MEP')
+  })
+})

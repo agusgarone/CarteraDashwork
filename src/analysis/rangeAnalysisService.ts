@@ -1,3 +1,5 @@
+import { valueExternalFlows, type PendingExternalFlowFx } from '../engine/calculations/externalFlowValuation'
+import { transactionFxRepository, type StoredTransactionFx } from '../repositories/transactionFxRepository'
 import type { PortfolioPeriod } from '../domain/period'
 import type { PortfolioSnapshot } from '../domain/snapshot'
 import type { Transaction } from '../domain/transaction'
@@ -43,9 +45,10 @@ export interface RangeAnalysisAvailable {
 }
 export type RangeAnalysisResult = RangeAnalysisAvailable
   | Exclude<RangeResolution, { status: 'AVAILABLE' }>
-  | { status: 'UNAVAILABLE'; reason: string; message?: string }
+  | { status: 'UNAVAILABLE'; reason: string; message?: string; externalFlowValuation?: PendingExternalFlowFx }
 
 export interface RangeAnalysisDependencies {
+  fxEnrichments?: { getByPeriod(periodId: string): Promise<StoredTransactionFx[]> }
   periods: Pick<PeriodRepository, 'getById' | 'getByPortfolio'>
   snapshots: Pick<SnapshotRepository, 'getLatestBefore' | 'getLatestByPeriod' | 'getPositions'>
   transactions: Pick<TransactionRepository, 'getByPeriod'>
@@ -90,13 +93,15 @@ export function createRangeAnalysisService(dependencies: RangeAnalysisDependenci
         actions.push(...await dependencies.corporateActions.getByPeriod(period.id))
       }
       const transactions = [...uniqueTransactions.values()]
-      if (transactions.some(row => (row.type === 'CONTRIBUTION' || row.type === 'WITHDRAWAL') && row.currency !== closing.currency)) return { status: 'UNAVAILABLE', reason: 'EXTERNAL_FLOW_CURRENCY_MISMATCH' }
-      const flows = aggregateExternalFlows(transactions)
+      const fxRows = (await Promise.all(included.map(period => dependencies.fxEnrichments?.getByPeriod(period.id) ?? []))).flat()
+      const valuation = valueExternalFlows(transactions, closing.currency, fxRows)
+      if (valuation.status === 'PENDING_EXTERNAL_FLOW_FX') return { status: 'UNAVAILABLE', reason: valuation.status, message: 'Falta una valuación documental para aportes o retiros en moneda extranjera.', externalFlowValuation: valuation }
+      const flows = aggregateExternalFlows(transactions, valuation.valuations)
       const openingValue = normalizeMonetary(opening.totalValue)
       const closingValue = normalizeMonetary(closing.totalValue)
       const investmentResult = calculateExpectedInvestmentResult({ openingValue, closingValue, contributions: flows.contributions, withdrawals: flows.withdrawals })
-      const base = { openingValue, closingValue, ...flows, investmentResult }
-      const periodReturn = calculateModifiedDietz({ investmentResult, openingValue, openingDate: opening.date, closingDate: closing.date, transactions })
+      const base = { openingValue, closingValue, ...flows, investmentResult, ...(valuation.valuations.some(row => row.currency !== row.baseCurrency) ? { externalFlowValuations: valuation.valuations } : {}) }
+      const periodReturn = calculateModifiedDietz({ investmentResult, openingValue, openingDate: opening.date, closingDate: closing.date, transactions, baseCurrency: closing.currency, externalFlowValuations: valuation.valuations })
       const openingPositions = await dependencies.snapshots.getPositions(opening.id)
       const closingPositions = await dependencies.snapshots.getPositions(closing.id)
       const ids = new Set([...openingPositions.map(row => row.instrumentId), ...closingPositions.map(row => row.instrumentId),
@@ -123,5 +128,6 @@ export function createRangeAnalysisService(dependencies: RangeAnalysisDependenci
 
 export const rangeAnalysisService = createRangeAnalysisService({
   periods: periodRepository, snapshots: snapshotRepository, transactions: transactionRepository,
+  fxEnrichments: transactionFxRepository,
   corporateActions: corporateActionRepository, getUsdReference: getPeriodUsdMepReference,
 })

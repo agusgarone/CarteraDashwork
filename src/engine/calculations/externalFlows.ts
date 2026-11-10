@@ -1,3 +1,4 @@
+import type { ExternalFlowBaseValuation } from './externalFlowValuation'
 import type { DecimalString } from '../../domain/common'
 import type { CurrencyCode } from '../../domain/currency'
 import type { Transaction } from '../../domain/transaction'
@@ -19,7 +20,7 @@ export interface ExternalFlows {
  * el neto no está. Una comisión queda fuera de ese flujo para poder
  * atribuirla después como costo.
  */
-export function aggregateExternalFlows(transactions: readonly Transaction[]): ExternalFlows {
+export function aggregateExternalFlows(transactions: readonly Transaction[], valuations?: readonly ExternalFlowBaseValuation[]): ExternalFlows {
   let contributions = zeroDecimal()
   let withdrawals = zeroDecimal()
   let currency: CurrencyCode | null = null
@@ -29,15 +30,17 @@ export function aggregateExternalFlows(transactions: readonly Transaction[]): Ex
       continue
     }
 
+    const valuation = valuations?.find(row => row.transactionId === transaction.id)
+    const flowCurrency = valuation?.baseCurrency ?? transaction.currency
     if (currency === null) {
-      currency = transaction.currency
-    } else if (currency !== transaction.currency) {
+      currency = flowCurrency
+    } else if (currency !== flowCurrency) {
       throw new AnalysisError(
         'Los aportes y retiros del período no están en una sola moneda.',
       )
     }
 
-    const amount = parseDecimal(resolveExternalFlowAmount(transaction))
+    const amount = parseDecimal(valuation?.amountBase ?? resolveExternalFlowAmount(transaction))
     if (transaction.type === 'CONTRIBUTION') {
       contributions = contributions.plus(amount)
     } else {
